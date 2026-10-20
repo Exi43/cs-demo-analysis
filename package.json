@@ -1,0 +1,73 @@
+{
+  "name": "csdemoanalysis",
+  "productName": "CS Demo Analysis",
+  "version": "1.0.0",
+  "private": true,
+  "author": "csdemoanalysis",
+  "description": "2D replay and opponent analysis for CS2 / FACEIT demos",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "parse": "node scripts/parse-cli.ts",
+    "dist": "electron-vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "local.csdemoanalysis",
+    "productName": "CSDemoAnalysis",
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/maps",
+        "to": "maps"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/@laihoe/**"
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "CS Demo Analysis",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "CS-Demo-Analysis-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "CS-Demo-Analysis-Portable-${version}.${ext}"
+    },
+    "fileAssociations": [
+      { "ext": "dem", "name": "CS2 Demo", "description": "Counter-Strike 2 demo", "role": "Viewer" }
+    ]
+  },
+  "dependencies": {
+    "@laihoe/demoparser2": "^0.42.0",
+    "fflate": "^0.8.3",
+    "fzstd": "^0.1.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^44.9.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
