@@ -1,7 +1,7 @@
 {
   "name": "csdemoanalysis",
   "productName": "CS Demo Analysis",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "author": "csdemoanalysis",
   "description": "2D replay and opponent analysis for CS2 / FACEIT demos",
