@@ -145,6 +145,10 @@ export interface MatchSummary {
   finalScore: Record<string, number>
   rounds: number
   players: PlayerInfo[]
+  /** Pfad der importierten Demo (Re-Import für 3D); fehlt bei älteren Importen */
+  demoPath?: string
+  /** Fehler beim Lesen der 3D-Daten (Import ohne <id>.3d.bin.gz) */
+  error3d?: string
 }
 
 export const DATA_VERSION = 1

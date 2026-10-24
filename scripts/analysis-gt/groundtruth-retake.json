@@ -1,0 +1,6 @@
+{
+ "_doc": "Retake-Klasse je Plant-Runde (plantInfo.retake: won-defuse | won-kills | lost | save | no-ct). Aus dem Spike-Prototyp (erkennung/proto-*.json), dort an allen Plant-Runden manuell gegen die Dumps geprueft; dust2 R6 unklar (\"?\" zaehlt nicht) -> 34 Labels, Spike: 33/34 plausibel. Retake = lebender CT naehert sich der Bombe >= 500 u oder < 600 u; save = CT lebt, versucht es nicht.",
+ "dust2": {"2":"lost","4":"won-defuse","5":"lost","6":"?","8":"lost","9":"lost","10":"lost","11":"won-defuse","13":"lost","14":"lost","15":"won-defuse","16":"lost","17":"save","21":"won-defuse"},
+ "mirage": {"3":"lost","6":"won-defuse","13":"won-defuse","15":"save","16":"won-defuse","18":"lost","19":"no-ct","27":"lost","29":"won-defuse","30":"won-defuse"},
+ "ancient": {"1":"lost","3":"no-ct","5":"won-defuse","6":"won-defuse","8":"won-defuse","9":"lost","10":"save","12":"lost","15":"save","16":"won-defuse","18":"won-defuse"}
+}

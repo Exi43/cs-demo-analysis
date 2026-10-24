@@ -1,9 +1,15 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import type { MatchData } from '../../shared/model'
-import { analyzeTeam, roundClock, type Entry, type TipKind, type WL } from '../../shared/analysis/report'
+import type { Entry } from '../../shared/analysis/report'
 import type { Ref } from '../../shared/analysis/rounds'
+import { buildAntiStrat } from '../../shared/analysis/antistrat'
+import { toMarkdown } from '../../shared/analysis/antistrat-text'
+import type { AntiStrat, IconToken } from '../../shared/analysis/types'
 import { Icon } from '../icons'
-import { Weapon } from '../weapons'
+import { mapLabel } from '../format'
+import { CTSideView, GamePlan, RosterTable, RoundTable, TSideView } from './report/sections'
+import { Chips, ExportIcon, Lines, ReportCtx, Rich, Sub, TagBadge, TokenIcon, type Ctx } from './report/ui'
+import './report/report.css'
 
 /** Team über mehrere Demos finden: das Team mit den meisten gemeinsamen Spielern */
 export function entriesFor(matches: MatchData[], base: MatchData, team: string): { entries: Entry[]; skipped: string[] } {
@@ -16,42 +22,89 @@ export function entriesFor(matches: MatchData[], base: MatchData, team: string):
   return { entries, skipped }
 }
 
-const bold = (text: string) => text.split(/\*\*(.+?)\*\*/g).map((p, i) => (i % 2 ? <b key={i}>{p}</b> : <Fragment key={i}>{p}</Fragment>))
-const pct = (w: number, t: number) => (t ? Math.round((100 * w) / t) : 0)
+const JUMP: [string, string][] = [['rp-t', 'T side'], ['rp-ct', 'CT side'], ['rp-plan', 'Game plan'], ['rp-rounds', 'Rounds']]
+const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
-const TIP_ICON: Record<TipKind, ReactNode> = {
-  site: <Icon name="target" />, rush: <Icon name="bolt" />, slow: <Icon name="clock" />, pistol: <Weapon name="USP-S" h={14} />,
-  push: <Icon name="arrow" />, stack: <Icon name="layers" />, retake: <Weapon name="c4" h={16} />, awp: <Weapon name="AWP" h={12} />,
-  star: <Icon name="star" />, force: <Weapon name="MAC-10" h={14} />,
-}
-const ROLE_ICON: Record<string, string> = { awp: 'AWP', entry: 'AK-47', lurk: 'Shadow Daggers', anchor: 'defuser', mid: 'M4A1-S', support: 'Smoke Grenade' }
-const NADE_ICON: Record<string, string> = { smoke: 'Smoke Grenade', flash: 'Flashbang', molotov: 'Molotov', he: 'High Explosive Grenade' }
-
-function Bar({ won, total, color = 'var(--good)' }: { won: number; total: number; color?: string }) {
-  return <div className="wlbar"><div style={{ width: `${pct(won, total)}%`, background: color }} /></div>
+/** PDF: Spielzug-Karten für den Druck aufklappen, danach wieder wie vorher */
+function printPdf() {
+  const closed = [...document.querySelectorAll<HTMLDetailsElement>('.report details:not([open])')]
+  closed.forEach(d => (d.open = true))
+  addEventListener('afterprint', () => closed.forEach(d => (d.open = false)), { once: true })
+  window.print()
 }
 
-function Tile({ label, wl, icon }: { label: string; wl: WL; icon?: ReactNode }) {
-  const p = pct(wl.won, wl.total)
+function ExportBar({ a }: { a: AntiStrat }) {
+  const [msg, setMsg] = useState('')
+  const say = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 1800) }
+  const copy = () => navigator.clipboard.writeText(toMarkdown(a)).then(() => say('Copied'), e => say(`Copy failed: ${e}`))
+  const save = () => {
+    const url = URL.createObjectURL(new Blob([toMarkdown(a)], { type: 'text/markdown' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = `antistrat-${a.team}-${a.map}.md`.replace(/[^\w.-]+/g, '_'); link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
   return (
-    <div className={`tile ${p >= 50 ? 'good' : 'bad'}`}>
-      <div className="tile-top">{icon}<span>{label}</span></div>
-      <div className="tile-num">{wl.won}<span>/{wl.total}</span></div>
-      <Bar won={wl.won} total={wl.total} color={p >= 50 ? 'var(--good)' : 'var(--bad)'} />
-    </div>
+    <span className="rp-export">
+      {msg && <span className="small muted">{msg}</span>}
+      <button className="ghost" onClick={copy} title="Copy as text (Markdown)"><ExportIcon name="copy" /> Copy text</button>
+      <button className="ghost" onClick={save} title="Save as .md file"><ExportIcon name="download" /> .md</button>
+      <button className="ghost" onClick={printPdf} title="Print / save as PDF"><ExportIcon name="print" /> PDF</button>
+    </span>
   )
 }
 
-function RoundChip({ label, won, onClick, title }: { label: string; won: boolean; onClick: () => void; title?: string }) {
-  return <button className={`rchip ${won ? 'w' : 'l'}`} onClick={onClick} title={title}><Icon name={won ? 'check' : 'x'} size={12} /> {label}</button>
+const LEGEND: [IconToken, string][] = [
+  ['smoke', 'smoke'], ['flash', 'flash'], ['molly', 'molly'], ['he', 'HE'], ['awp', 'AWP'], ['deagle', 'Deagle'], ['c4', 'plant'], ['kit', 'retake'],
+  ['knife', 'lurk'], ['target', 'duel / pick'], ['arrow', 'push'], ['shuffle', 'rotate / fake'], ['layers', 'setup'], ['warn', 'care'],
+]
+
+function Header({ a }: { a: AntiStrat }) {
+  const sideTile = (s: 'T' | 'CT') => {
+    const { won, total } = a.sides[s]
+    return (
+      <div className={`tile ${won * 2 >= total ? 'good' : 'bad'}`}>
+        <div className="tile-top"><span className={`side-dot ${s}`} />Their {s}</div>
+        <div className="tile-num">{won}<span>/{total}</span></div>
+      </div>
+    )
+  }
+  return (
+    <>
+      <div className="tiles">
+        {a.results.map((r, i) => (
+          <div key={i} className={`tile ${r.us > r.them ? 'good' : 'bad'}`}>
+            <div className="tile-top"><span>{a.team} vs {r.opponent}</span></div>
+            <div className="tile-num">{r.us}<span> : {r.them}</span></div>
+          </div>
+        ))}
+        {sideTile('T')}{sideTile('CT')}
+        <div className="tile">
+          <div className="tile-top">{mapLabel(a.map)}</div>
+          <div className="tile-num">{a.demos}<span> demo{a.demos === 1 ? '' : 's'} · {a.rounds} rds</span></div>
+        </div>
+      </div>
+      <div className="rp-legend small muted">
+        <span className="rp-tag habit">HABIT</span> ≥ 3× <span className="rp-tag pattern">PATTERN</span> 2× <span className="rp-tag once">ONCE</span> 1× · n/N = seen in n of N rounds ·
+        <Icon name="clock" size={13} /> 1:55 → 0:00 · <b>?</b> = name from landing spot ·
+        {LEGEND.map(([t, l]) => <span key={t}><TokenIcon t={t} size={13} /> {l}</span>)}
+      </div>
+    </>
+  )
 }
 
 export function ReportView({ matches, onRef }: { matches: MatchData[]; onRef: (r: Ref) => void }) {
   const base = matches[0]
   const [team, setTeam] = useState(base.teams[1])
   const { entries, skipped } = useMemo(() => entriesFor(matches, base, team), [matches, team])
-  const rep = useMemo(() => (entries.length ? analyzeTeam(entries) : undefined), [entries])
-  const tag = (r: Ref) => `${matches.length > 1 ? `D${matches.findIndex(m => m.id === r.matchId) + 1} ` : ''}R${r.round}`
+  const a = useMemo(() => (entries.length ? buildAntiStrat(entries) : undefined), [entries])
+  const ctx = useMemo<Ctx>(() => {
+    const won = new Map(a?.roundList.map(r => [`${r.ref.matchId}:${r.ref.round}`, r.won]))
+    return {
+      onRef,
+      label: r => `${matches.length > 1 ? `D${matches.findIndex(m => m.id === r.matchId) + 1}·` : ''}R${r.round}`,
+      won: r => won.get(`${r.matchId}:${r.round}`),
+    }
+  }, [a, matches, onRef])
 
   return (
     <div className="report">
@@ -64,172 +117,55 @@ export function ReportView({ matches, onRef }: { matches: MatchData[]; onRef: (r
         ))}
       </div>
       {skipped.length > 0 && <div className="error">Team not found in: {skipped.join(', ')}</div>}
-      {rep && (
-        <>
-          <div className="tiles">
-            {rep.results.map((r, i) => (
-              <div key={i} className={`tile ${r.us > r.them ? 'good' : 'bad'}`}>
-                <div className="tile-top"><span>vs {r.opponent}</span></div>
-                <div className="tile-num">{r.us}<span> : {r.them}</span></div>
-              </div>
-            ))}
-            <Tile label="T side" wl={rep.sides.T} icon={<span className="side-dot T" />} />
-            <Tile label="CT side" wl={rep.sides.CT} icon={<span className="side-dot CT" />} />
-            {rep.buys.pistol && <Tile label="Pistol" wl={rep.buys.pistol} icon={<Weapon name="Glock-18" h={13} />} />}
-            {rep.buys.eco && <Tile label="Eco" wl={rep.buys.eco} icon={<Weapon name="P250" h={13} />} />}
-            {rep.buys.force && <Tile label="Force" wl={rep.buys.force} icon={<Weapon name="MAC-10" h={13} />} />}
-            {rep.buys.full && <Tile label="Full buy" wl={rep.buys.full} icon={<Weapon name="AK-47" h={13} />} />}
+      {a && (
+        <ReportCtx.Provider value={ctx}>
+          <h1 className="rp-title">Anti-strat · {a.team} · {mapLabel(a.map)}</h1>
+          <Header a={a} />
+
+          <nav className="rp-jump">
+            {JUMP.map(([id, label]) => <button key={id} className="ghost" onClick={() => jump(id)}>{label}</button>)}
+            <ExportBar a={a} />
+          </nav>
+
+          <h2><Icon name="star" /> &nbsp;Keys (read first)</h2>
+          <div className="rp-keys">{a.keys.map((k, i) => (
+            <div key={i} className="rp-card rp-key">
+              <div className="rp-key-n"><Icon name="star" size={14} /> {i + 1}</div>
+              <div className="rp-key-t">{k.icon && <TokenIcon t={k.icon} size={16} />} <Rich text={k.text} /></div>
+              {k.counter && <div className="rp-counter"><Icon name="arrow" size={13} /> <Rich text={k.counter} /></div>}
+              <div className="rp-key-f">{k.tag && <TagBadge tag={k.tag} />} <Chips refs={k.refs} /></div>
+            </div>
+          ))}</div>
+
+          <h2>Roster</h2>
+          <RosterTable rows={a.roster} />
+
+          <h2 id="rp-t"><span className="side-dot T" /> T side · {a.sides.T.won}/{a.sides.T.total}</h2>
+          <TSideView t={a.t} />
+
+          <h2 id="rp-ct"><span className="side-dot CT" /> CT side · {a.sides.CT.won}/{a.sides.CT.total}</h2>
+          <CTSideView ct={a.ct} />
+
+          <div className="rp-cols">
+            <Sub title="Economy" icon={<TokenIcon t="deagle" />} show={a.economy.length > 0}><Lines lines={a.economy} /></Sub>
+            <Sub title="What worked for us" icon={<Icon name="check" size={15} />} show={a.worked.length > 0}><Lines lines={a.worked} /></Sub>
           </div>
 
-          {(rep.pistols.t.length > 0 || rep.pistols.ct.length > 0) && (
-            <>
-              <h2><Weapon name="USP-S" h={16} />&nbsp; Pistol rounds</h2>
-              <div className="groups">
-                {rep.pistols.t.map(r => (
-                  <div key={tag(r.ref)} className="group pistol">
-                    <div className="g-head">
-                      <b><span className="side-dot T" />T pistol · {tag(r.ref)}</b>
-                      <span className={r.won ? 'good-txt' : 'bad-txt'}>{r.won ? 'won' : 'lost'} <button className="ghost play-ref" onClick={() => onRef(r.ref)}><Icon name="replay" size={14} /></button></span>
-                    </div>
-                    <div className="pistol-plan">{r.plan}{r.hitSec !== undefined && <span className="muted"> at {roundClock(r.hitSec)}</span>}</div>
-                    <div className="badges">
-                      <span className="badge">Start:</span>
-                      {r.start.A > 0 && <span className="badge">{r.start.A} A side</span>}
-                      {r.start.Mid > 0 && <span className="badge">{r.start.Mid} mid</span>}
-                      {r.start.B > 0 && <span className="badge">{r.start.B} B side</span>}
-                    </div>
-                    {r.rotators.length > 0 && <div className="badges">{r.rotators.map(s => <span key={s} className="badge"><Icon name="shuffle" size={13} /> {rep.names[s]} rotates to {r.site}</span>)}</div>}
-                    {r.lurkers.length > 0 && <div className="badges">{r.lurkers.map(s => <span key={s} className="badge"><Weapon name="Shadow Daggers" h={11} /> {rep.names[s]} lurks</span>)}</div>}
-                    {r.utility.length > 0 && <div className="util">{r.utility.filter(u => r.hitSec === undefined || u.sec <= r.hitSec + 3).map((u, i) => (
-                      <span key={i} className="util-chip"><Weapon name={NADE_ICON[u.type]} h={14} /> {u.place} <i>{rep.names[u.thrower]}</i></span>
-                    ))}</div>}
-                    {r.opening && <div className="badges"><span className={`badge ${r.opening.forUs ? 'good' : 'bad'}`}><Icon name="target" size={13} /> opening {r.opening.forUs ? 'kill' : 'death'} at {r.opening.place} ({Math.round(r.opening.sec)} s)</span></div>}
-                  </div>
-                ))}
-                {rep.pistols.ct.map(r => (
-                  <div key={tag(r.ref)} className="group pistol">
-                    <div className="g-head">
-                      <b><span className="side-dot CT" />CT pistol · {tag(r.ref)}</b>
-                      <span className={r.won ? 'good-txt' : 'bad-txt'}>{r.won ? 'won' : 'lost'} <button className="ghost play-ref" onClick={() => onRef(r.ref)}><Icon name="replay" size={14} /></button></span>
-                    </div>
-                    <div className="setups">
-                      <span className="setup"><span className="st A">A<b>{r.zones.A}</b></span><span className="st M">Mid<b>{r.zones.Mid}</b></span><span className="st B">B<b>{r.zones.B}</b></span></span>
-                      {r.stack && <span className="badge"><Icon name="layers" size={13} /> stack {r.stack}</span>}
-                    </div>
-                    <div className="ct-pos">{Object.entries(r.positions).map(([s, pl]) => (
-                      <div key={s}><span>{rep.names[s]}</span><b>{pl}</b></div>
-                    ))}</div>
-                    {r.aggressive.length > 0 && <div className="badges">{r.aggressive.map(a => <span key={a.steamid} className="badge bad"><Icon name="arrow" size={13} /> {rep.names[a.steamid]} pushes {a.place} ({a.sec} s)</span>)}</div>}
-                    {r.utility.length > 0 && <div className="util">{r.utility.map((u, i) => (
-                      <span key={i} className="util-chip"><Weapon name={NADE_ICON[u.type]} h={14} /> {u.place} <i>{rep.names[u.thrower]}</i></span>
-                    ))}</div>}
-                    <div className="badges">
-                      {r.opening && <span className={`badge ${r.opening.forUs ? 'good' : 'bad'}`}><Icon name="target" size={13} /> opening {r.opening.forUs ? 'kill' : 'death'} at {r.opening.place} ({Math.round(r.opening.sec)} s)</span>}
-                      {r.retake && <span className={`badge ${r.retake === 'won' ? 'good' : 'bad'}`}><Weapon name="defuser" h={12} /> retake {r.retake}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
+          <h2 id="rp-plan"><Icon name="target" /> &nbsp;Game plan</h2>
+          <GamePlan a={a} />
+
+          <h2 id="rp-rounds">Round list</h2>
+          <RoundTable rows={a.roundList} />
+
+          {a.limits.length > 0 && (
+            <Sub title="Limits" icon={<TokenIcon t="warn" />}>
+              <ul className="rp-limits small muted">{a.limits.map((l, i) => <li key={i}><Rich text={l} /></li>)}</ul>
+            </Sub>
           )}
-
-          <h2>How to beat them</h2>
-          <div className="tips">
-            {rep.tips.map((t, i) => (
-              <div key={i} className="tip">
-                <div className="tip-ico">{TIP_ICON[t.kind]}</div>
-                <div className="tip-txt">{bold(t.text)}</div>
-                {t.refs.length > 0 && <button className="ghost play-ref" title="Watch in replay" onClick={() => onRef(t.refs[0])}><Icon name="replay" size={14} /></button>}
-              </div>
-            ))}
-          </div>
-
-          <h2>Players</h2>
-          <div className="pcards">
-            {rep.players.map(p => (
-              <div key={p.steamid} className="pcard">
-                <div className="pc-head">
-                  <span className="pc-name">{p.name}</span>
-                  <span className={`rating ${p.rating >= 1.15 ? 'good' : p.rating < 0.85 ? 'bad' : ''}`}>{p.rating.toFixed(2)}</span>
-                </div>
-                <div className="pc-stats"><span>{p.kills}–{p.deaths}</span><span>ADR {p.adr.toFixed(0)}</span><span>KAST {p.kast.toFixed(0)}%</span></div>
-                <div className="roles">{p.roles.map(r => <span key={r.kind} className="role"><Weapon name={ROLE_ICON[r.kind]} h={12} /> {r.label}</span>)}</div>
-                <div className="pos"><span className="side-dot CT" />{p.ctPos.map(([pl, v]) => <span key={pl} className="pos-chip">{pl} <i>{v}%</i></span>)}</div>
-                <div className="pos"><span className="side-dot T" />{p.tPos.map(([pl, v]) => <span key={pl} className="pos-chip">{pl} <i>{v}%</i></span>)}</div>
-              </div>
-            ))}
-          </div>
-
-          <h2><span className="side-dot T" /> T side</h2>
-          <div className="groups">
-            {rep.tGroups.map(g => (
-              <div key={g.key} className="group">
-                <div className="g-head"><b>{g.label}</b><span className="muted">{g.won}/{g.total} won</span></div>
-                <div className="sites">
-                  <div className="site-split">
-                    <div className="sA" style={{ flex: Math.max(g.a.total, 0.001) }}>A {g.a.total > 0 && <i>{g.a.won}/{g.a.total}</i>}</div>
-                    <div className="sB" style={{ flex: Math.max(g.b.total, 0.001) }}>B {g.b.total > 0 && <i>{g.b.won}/{g.b.total}</i>}</div>
-                  </div>
-                </div>
-                <div className="badges">
-                  {g.medianHit !== undefined && <span className="badge"><Icon name="clock" size={13} /> hit {roundClock(g.medianHit)}</span>}
-                  {g.rushes > 0 && <span className="badge"><Icon name="bolt" size={13} /> {g.rushes} rush</span>}
-                  {g.defaults > 0 && <span className="badge"><Icon name="shuffle" size={13} /> {g.defaults} default</span>}
-                  {g.lurkers.slice(0, 2).map(l => <span key={l.name} className="badge"><Weapon name="Shadow Daggers" h={11} /> {l.name} ×{l.n}</span>)}
-                </div>
-                {g.utility.length > 0 && (
-                  <div className="util">{g.utility.map((u, i) => <span key={i} className="util-chip"><Weapon name={NADE_ICON[u.type]} h={14} /> {u.place} <i>×{u.n}</i></span>)}</div>
-                )}
-                <div className="rchips">{g.rounds.map(r => (
-                  <RoundChip key={tag(r.ref)} won={r.won} onClick={() => onRef(r.ref)}
-                    label={`${tag(r.ref)} ${r.plan}`} title={`${r.hitSec !== undefined ? `Hit at ${roundClock(r.hitSec)}` : ''}${r.opening ? ` · Opening: ${r.opening.forUs ? 'kill' : 'death'} ${r.opening.place}` : ''}`} />
-                ))}</div>
-              </div>
-            ))}
-          </div>
-
-          <h2><span className="side-dot CT" /> CT side</h2>
-          <div className="groups">
-            {rep.ctGroups.map(g => (
-              <div key={g.key} className="group">
-                <div className="g-head"><b>{g.label}</b><span className="muted">{g.won}/{g.total} won</span></div>
-                <div className="setups">{g.setups.map(s => {
-                  const [a, m, b] = s.setup.match(/\d+/g)!.map(Number)
-                  return (
-                    <button key={s.setup} className="setup" onClick={() => onRef(s.refs[0])} title="A – Mid – B after 15 s">
-                      <span className="st A">A<b>{a}</b></span><span className="st M">Mid<b>{m}</b></span><span className="st B">B<b>{b}</b></span><i>×{s.n}</i>
-                    </button>
-                  )
-                })}</div>
-                <div className="badges">
-                  {g.stacks.map(s => <span key={s.site} className="badge"><Icon name="layers" size={13} /> stack {s.site} ×{s.n}</span>)}
-                  {g.retakes && <span className={`badge ${pct(g.retakes.won, g.retakes.total) >= 50 ? 'good' : 'bad'}`}><Weapon name="defuser" h={12} /> retakes {g.retakes.won}/{g.retakes.total}</span>}
-                </div>
-                {g.pushes.length > 0 && <div className="util">{g.pushes.map(p => (
-                  <button key={p.name + p.place} className="util-chip" onClick={() => onRef(p.refs[0])}><Icon name="arrow" size={13} /> {p.name} → {p.place} <i>×{p.n}</i></button>
-                ))}</div>}
-                <div className="rchips">{g.rounds.map(r => <RoundChip key={tag(r.ref)} won={r.won} onClick={() => onRef(r.ref)} label={`${tag(r.ref)} ${r.setup}`} />)}</div>
-              </div>
-            ))}
-          </div>
-
-          <h2>Opening duels</h2>
-          <div className="groups">
-            {rep.openings.map(o => (
-              <div key={o.side} className="group">
-                <div className="g-head"><b><span className={`side-dot ${o.side}`} /> {o.side}</b><span className="muted">{o.won}/{o.total} won</span></div>
-                <Bar won={o.won} total={o.total} color={pct(o.won, o.total) >= 50 ? 'var(--good)' : 'var(--bad)'} />
-                <div className="badges">
-                  <span className="badge">after opening kill: {o.wonAfter}/{o.won} rounds</span>
-                  <span className="badge">after opening death: {o.lostAfter}/{o.total - o.won}</span>
-                </div>
-                <div className="util">{o.places.map(([pl, n]) => <span key={pl} className="util-chip"><Icon name="target" size={13} /> {pl} <i>×{n}</i></span>)}</div>
-              </div>
-            ))}
-          </div>
-          <p className="muted small">Rule-based analysis, no AI. Click any round to check it in the replay.</p>
-        </>
+          <p className="muted small">Rule-based analysis, no AI. Click any round chip to watch it in the replay.</p>
+        </ReportCtx.Provider>
       )}
     </div>
   )
 }
+

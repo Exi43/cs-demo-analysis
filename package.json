@@ -28,10 +28,15 @@
       }
     ],
     "asarUnpack": [
-      "node_modules/@laihoe/**"
+      "node_modules/@laihoe/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
     ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -48,20 +53,32 @@
       "artifactName": "CS-Demo-Analysis-Portable-${version}.${ext}"
     },
     "fileAssociations": [
-      { "ext": "dem", "name": "CS2 Demo", "description": "Counter-Strike 2 demo", "role": "Viewer" }
+      {
+        "ext": "dem",
+        "name": "CS2 Demo",
+        "description": "Counter-Strike 2 demo",
+        "role": "Viewer"
+      }
     ]
   },
   "dependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "@laihoe/demoparser2": "^0.42.0",
     "fflate": "^0.8.3",
     "fzstd": "^0.1.1",
+    "meshoptimizer": "^1.3.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "sharp": "^0.35.5",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^44.9.1",
     "electron-builder": "^26.15.3",

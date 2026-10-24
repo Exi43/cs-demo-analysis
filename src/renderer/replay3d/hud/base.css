@@ -1,0 +1,46 @@
+/* Übertragungs-HUD des 3D-Replays: Farb-Tokens (Entwurf v2, Füllung/Navy gemessen an Berats Referenzbildern) und Skalierung.
+   Bühne = Element mit .hud-stage (+ data-hud-stage für _tools/rects.cjs); useHudScale (assets.tsx) setzt --s = Bühnenhöhe / 1080.
+   Darin EIN .hud: alle HUD-Maße in 1080p-px, zoom: var(--s) skaliert sie. .hud lässt die Maus zur 3D-Szene durch:
+   klickbare Teile setzen selbst pointer-events: auto. Messpunkte: data-hud="<name>" (Namen wie in _tools/rects.cjs). */
+.hud-stage {
+  --ct: #b5d4ee; --t: #ead18a;             /* csgostyles.vcss color-CT / color-T: Namen, Texte */
+  --ct-kf: #6f9ce6; --t-kf: #eabe54;       /* huddeathnotice.vcss: Killfeed-Namen */
+  --ct-fill: #133167; --t-fill: #665318;   /* Teamleisten-Füllung = HP (gemessen Bild 1/6/7) */
+  --navy: #062281; --navy-2: #041b72;      /* Scoreboard oben/unten (gemessen Bild 1) */
+  --ct-strip: #9ecff5; --t-strip: #f5dfa0; /* Slot-Streifen, Team-Tag */
+  --rest: rgba(150, 150, 162, .42);        /* Teamleiste ohne HP */
+  --dead: rgba(78, 70, 68, .78);
+  --money: #9be36d;
+  --bomb: #d10a0e;
+  --defuse: #47c8f3;
+  --hud-bg: rgba(0, 0, 0, .627);           /* hud-blur-bg-color #000000a0 (Killfeed, Demo-Leiste) */
+  --f: 'Stratum2', 'Arial Narrow', Arial, sans-serif;
+  --fm: 'Stratum2 Mono', 'Stratum2', Arial, sans-serif;
+  --s: 1;
+  position: relative;
+  overflow: hidden;
+}
+.hud {
+  position: absolute; inset: 0; zoom: var(--s);
+  pointer-events: none; user-select: none;
+  font-family: var(--f); color: #fff; -webkit-font-smoothing: antialiased;
+}
+.hud *, .hud *::before, .hud *::after { box-sizing: border-box; }
+.hud .shadow { text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
+
+/* <HudIcon>: Maske in currentColor (Größe per CSS), img = weißes Original mit natürlicher Breite */
+.hud-ico {
+  display: inline-block; flex: none; width: 1em; height: 1em; background: currentColor;
+  -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat;
+}
+.hud-ico.none { background: none; }
+.hud-img { display: block; height: 1em; width: auto; }
+
+/* <Avatar>: Steam-Profilbild über Initialen auf Teamfarbe (Rückfall ohne Internet) */
+.hud-av {
+  position: relative; display: grid; place-items: center; flex: none; overflow: hidden; border-radius: 2px;
+  font: 700 22px var(--f); letter-spacing: .5px; color: #fff;
+}
+.hud-av.CT { background: linear-gradient(160deg, #3d6fc4, #18306a); }
+.hud-av.T { background: linear-gradient(160deg, #c9a43c, #6b5416); }
+.hud-av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }

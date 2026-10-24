@@ -1,0 +1,49 @@
+/* 3D-Replay: Vollbild-Bühne, Teile des HUD-Layouts (Minimap, Granaten-Kamera-Rahmen, Tasten, Ego-Overlays), Lade-Bildschirm,
+   Tasten-Overlay (auch 2D). Alles in .hud ist in 1080p-px (zoom: var(--s), hud/base.css); die Bausteine haben eigene CSS in hud/. */
+.h3-root { position: fixed; inset: 0; z-index: 20; display: flex; background: #000; }
+.h3-stage { flex: 1; min-width: 0; position: relative; overflow: hidden; background: #000; }
+.h3-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+
+/* Minimap oben links (Entwurf v2 #radar) */
+.h3-radar { position: absolute; left: 16px; top: 16px; width: 330px; height: 330px; border-radius: 6px; background: rgba(8, 12, 20, .55); }
+
+/* Rahmen + Kopfzeile der Granaten-Kamera (das Bild zeichnet die Engine an dieselbe Stelle, v2 #pip) */
+.h3-pip { position: absolute; left: 16px; top: 362px; width: 330px; height: 186px; border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .75), 0 4px 14px rgba(0, 0, 0, .55); }
+.h3-pip .bar { position: absolute; left: 0; right: 0; top: 0; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .75), rgba(0, 0, 0, 0)); font: 700 13px var(--f); letter-spacing: .6px; }
+.h3-pip .bar .hud-img { height: 17px; }
+.h3-pip .bar .T { color: #f0cf6a; } .h3-pip .bar .CT { color: var(--ct); }
+.h3-pip .rec { position: absolute; right: 8px; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: #ff3b30; box-shadow: 0 0 5px #ff3b30; }
+
+/* Tasten-Anzeige (Option showKeys, v2 #keys) */
+.h3-keys { position: absolute; left: 1204px; top: 868px; }
+.h3-keys .keys { gap: 0; padding: 6px 8px 8px; border-radius: 4px; background: rgba(0, 0, 0, .5); box-shadow: 0 2px 8px rgba(0, 0, 0, .35); }
+.h3-keys .keys-label { font: 700 11px var(--f); letter-spacing: .8px; color: #b9c2cc; margin: 0 0 4px 1px; text-transform: uppercase; }
+.h3-keys .keys-grid { grid-template-columns: repeat(4, 30px) 6px 32px 32px; grid-template-rows: 28px 28px 24px; }
+.h3-keys .key { font: 700 13px var(--f); color: #d6dbe0; background: rgba(255, 255, 255, .07); border-color: rgba(255, 255, 255, .28); border-radius: 3px; }
+.h3-keys .key.down { background: #f4f4f4; color: #101216; border-color: #fff; box-shadow: 0 0 6px rgba(255, 255, 255, .45); }
+
+/* Ego-Sicht: Fadenkreuz, Zielfernrohr */
+.h3-cross { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); filter: drop-shadow(0 0 1px #000);
+  background: linear-gradient(#5f5, #5f5) center top / 2px 8px no-repeat, linear-gradient(#5f5, #5f5) center bottom / 2px 8px no-repeat,
+    linear-gradient(#5f5, #5f5) left center / 8px 2px no-repeat, linear-gradient(#5f5, #5f5) right center / 8px 2px no-repeat; }
+.h3-xhair { position: absolute; inset: 0; width: 100%; height: 100%; } /* auch Zielfernrohr (Hud.tsx Scope) */
+
+/* Lade-Bildschirm */
+.h3-load { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 40%, #1a1f29, #0b0d11 70%); }
+.h3-load-box { width: min(480px, 90%); display: flex; flex-direction: column; gap: 10px; padding: 20px 24px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+.h3-load-box h2 { margin: 0; font-size: 18px; }
+.h3-load-box .bar { max-width: none; margin: 0; }
+.h3-load-box .error { margin: 0; }
+.h3-load-row { display: flex; gap: 14px; align-items: center; }
+
+/* Tasten-Overlay */
+.keys { display: inline-flex; flex-direction: column; gap: 3px; padding: 6px; border-radius: 6px; background: rgba(12, 14, 18, .62); pointer-events: none; }
+.canvas-wrap > .keys { position: absolute; right: 8px; bottom: 8px; }
+.keys-label { font-size: 11px; font-weight: 700; color: #fff; }
+.keys-grid { display: grid; grid-template-columns: repeat(7, 22px); grid-auto-rows: 22px; gap: 3px;
+  grid-template-areas: ". w e r . m1 m2" "a s d . . m1 m2" "sh sh ct sp sp sp sp"; }
+.key { display: flex; align-items: center; justify-content: center; border: 1px solid #ffffff40; border-radius: 4px; background: #00000059;
+  font-size: 10px; font-weight: 700; color: #ffffffa8; text-shadow: none; }
+.key.down { background: #fff; border-color: #fff; color: #000; }

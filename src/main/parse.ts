@@ -310,6 +310,8 @@ export function parseDemo(raw: Buffer, fileName: string, progress: Progress = ()
     const R = rounds[ri]
     if (R.frameTicks[R.frameTicks.length - 1] !== t) {
       if (R.frameTicks.length && t < R.frameTicks[R.frameTicks.length - 1]) continue
+      // Raster lückenlos halten (Tick ohne Zeilen, z. B. Freeze-Zeit): 3D-Spuren und Granaten rechnen mit festem FRAME_STEP
+      while (R.frameTicks.length && t - R.frameTicks[R.frameTicks.length - 1] > FRAME_STEP) R.frameTicks.push(R.frameTicks[R.frameTicks.length - 1] + FRAME_STEP)
       R.frameTicks.push(t)
     }
     const f = R.frameTicks.length - 1

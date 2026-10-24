@@ -1,0 +1,666 @@
+{
+ "_doc": "Manuelle Labels aus den Runden-Dumps (dump-*.txt): site = Ziel des Angriffs (A/B, '-' = keiner, '?' = unklar); cat = akzeptierte Kategorien (rush/execute/split/hit/default/none); fake = yes/no/?; lurk = Spieler, die vor dem Hit allein abseits der Gruppe waren",
+ "dust2": {
+  "1": {
+   "site": "A",
+   "cat": [
+    "split",
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": [
+    "tyrannus00"
+   ]
+  },
+  "2": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "3": {
+   "site": "A",
+   "cat": [
+    "none",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "4": {
+   "site": "A",
+   "cat": [
+    "execute"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "5": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "6": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "yes",
+   "lurk": []
+  },
+  "7": {
+   "site": "A",
+   "cat": [
+    "none",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "8": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": [
+    "Exi"
+   ]
+  },
+  "9": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": [
+    "tyrannus00",
+    "SymboIe"
+   ]
+  },
+  "10": {
+   "site": "A",
+   "cat": [
+    "execute"
+   ],
+   "fake": "no",
+   "lurk": [
+    "tyrannus00"
+   ]
+  },
+  "11": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "12": {
+   "site": "A",
+   "cat": [
+    "default",
+    "hit",
+    "none"
+   ],
+   "fake": "no",
+   "lurk": [
+    "tyrannus00"
+   ]
+  },
+  "13": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "?",
+   "lurk": []
+  },
+  "14": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": [
+    "DiiiDiii"
+   ]
+  },
+  "15": {
+   "site": "A",
+   "cat": [
+    "execute"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "16": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "17": {
+   "site": "A",
+   "cat": [
+    "execute"
+   ],
+   "fake": "no",
+   "lurk": [
+    "sk1nnex"
+   ]
+  },
+  "18": {
+   "site": "A",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "19": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "?",
+   "lurk": []
+  },
+  "20": {
+   "site": "A",
+   "cat": [
+    "split"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "21": {
+   "site": "B",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": [
+    "DiiiDiii"
+   ]
+  }
+ },
+ "mirage": {
+  "1": {
+   "site": "A",
+   "cat": [
+    "hit"
+   ],
+   "fake": "yes",
+   "lurk": []
+  },
+  "2": {
+   "site": "B",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "3": {
+   "site": "A",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "4": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "5": {
+   "site": "B",
+   "cat": [
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "6": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default",
+    "split"
+   ],
+   "fake": "?",
+   "lurk": []
+  },
+  "7": {
+   "site": "A",
+   "cat": [
+    "split",
+    "default",
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "8": {
+   "site": "A",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "9": {
+   "site": "B",
+   "cat": [
+    "default",
+    "hit"
+   ],
+   "fake": "?",
+   "lurk": []
+  },
+  "10": {
+   "site": "B",
+   "cat": [
+    "default",
+    "hit"
+   ],
+   "fake": "yes",
+   "lurk": []
+  },
+  "11": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "12": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "13": {
+   "site": "B",
+   "cat": [
+    "rush",
+    "execute"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "14": {
+   "site": "A",
+   "cat": [
+    "execute",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "15": {
+   "site": "B",
+   "cat": [
+    "split",
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "16": {
+   "site": "A",
+   "cat": [
+    "split",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "17": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "18": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "rush"
+   ],
+   "fake": "?",
+   "lurk": [
+    "Aposthrophe-"
+   ]
+  },
+  "19": {
+   "site": "A",
+   "cat": [
+    "execute",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": [
+    "laiq__"
+   ]
+  },
+  "20": {
+   "site": "A",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": [
+    "daMAGE_RYU"
+   ]
+  },
+  "21": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "default",
+    "split"
+   ],
+   "fake": "?",
+   "lurk": [
+    "Aposthrophe-"
+   ]
+  },
+  "22": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "split"
+   ],
+   "fake": "no",
+   "lurk": [
+    "laiq__"
+   ]
+  },
+  "23": {
+   "site": "B",
+   "cat": [
+    "default",
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "24": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "25": {
+   "site": "A",
+   "cat": [
+    "none",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "26": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "27": {
+   "site": "A",
+   "cat": [
+    "execute",
+    "rush",
+    "split"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "28": {
+   "site": "B",
+   "cat": [
+    "default",
+    "hit"
+   ],
+   "fake": "yes",
+   "lurk": []
+  },
+  "29": {
+   "site": "B",
+   "cat": [
+    "default",
+    "hit"
+   ],
+   "fake": "yes",
+   "lurk": [
+    "siroitora777"
+   ]
+  },
+  "30": {
+   "site": "A",
+   "cat": [
+    "split"
+   ],
+   "fake": "no",
+   "lurk": []
+  }
+ },
+ "ancient": {
+  "1": {
+   "site": "B",
+   "cat": [
+    "rush",
+    "split"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "2": {
+   "site": "A",
+   "cat": [
+    "split",
+    "hit"
+   ],
+   "fake": "?",
+   "lurk": [
+    "Dan4os"
+   ]
+  },
+  "3": {
+   "site": "A",
+   "cat": [
+    "split",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "4": {
+   "site": "B",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "5": {
+   "site": "A",
+   "cat": [
+    "execute",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": [
+    "Dan4os"
+   ]
+  },
+  "6": {
+   "site": "B",
+   "cat": [
+    "split",
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "7": {
+   "site": "B",
+   "cat": [
+    "none",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "8": {
+   "site": "A",
+   "cat": [
+    "hit",
+    "default"
+   ],
+   "fake": "no",
+   "lurk": [
+    "Dan4os"
+   ]
+  },
+  "9": {
+   "site": "A",
+   "cat": [
+    "default",
+    "split"
+   ],
+   "fake": "yes",
+   "lurk": [
+    "Dan4os"
+   ]
+  },
+  "10": {
+   "site": "B",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": [
+    "patik_69"
+   ]
+  },
+  "11": {
+   "site": "B",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": [
+    "Dan4os"
+   ]
+  },
+  "12": {
+   "site": "B",
+   "cat": [
+    "execute",
+    "split"
+   ],
+   "fake": "no",
+   "lurk": [
+    "Dan4os"
+   ]
+  },
+  "13": {
+   "site": "A",
+   "cat": [
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": [
+    "SonofEpstein"
+   ]
+  },
+  "14": {
+   "site": "?",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "15": {
+   "site": "B",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "16": {
+   "site": "A",
+   "cat": [
+    "hit"
+   ],
+   "fake": "no",
+   "lurk": [
+    "NS-Killer"
+   ]
+  },
+  "17": {
+   "site": "A",
+   "cat": [
+    "none"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "18": {
+   "site": "B",
+   "cat": [
+    "hit",
+    "rush"
+   ],
+   "fake": "no",
+   "lurk": []
+  },
+  "19": {
+   "site": "B",
+   "cat": [
+    "execute",
+    "split"
+   ],
+   "fake": "no",
+   "lurk": [
+    "NS-Killer"
+   ]
+  }
+ },
+ "_revisions": "Nach Abstandsprüfung (dbg-lurk.ts) korrigiert: ancient R3 Dan4os und R15 kanzit waren < 700 u von Mitspielern (kein Lurker), dust2 R19 stakson hatte Mitspieler im Upper Tunnel; ancient R2 fake=? (B-Util 10-14 s, dann A)"
+}

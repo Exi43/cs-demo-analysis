@@ -1,0 +1,27 @@
+{
+ "_doc": "20 Fakten aus methodik/beispiel-dust2.md (Anti-Strat Derdummbadss, user-demo.dem). eval-analysis.ts prueft jeden Regex (ohne Gross-/Kleinschreibung, eine Zeile) gegen toMarkdown(buildAntiStrat(...)) und meldet n/20. Gegen beispiel-dust2.md selbst: 20/20.",
+ "match": "4699fdaf49070d28",
+ "team": "Derdummbadss",
+ "facts": [
+  { "id": "score", "re": "\\b8\\s*:\\s*13\\b", "src": "Header: 8 : 13" },
+  { "id": "ct-record", "re": "\\b3/12\\b", "src": "CT 3/12" },
+  { "id": "opening-lost", "re": "\\b0/7\\b", "src": "Keys 1: CT nach verlorenem Opening 0/7" },
+  { "id": "retakes", "re": "retakes?\\W+2/8", "src": "Keys 2: Retakes 2/8" },
+  { "id": "retake-hero", "re": "DiiiDiii.*(retake|defuse)|(retake|defuse).*DiiiDiii", "src": "Retake-Siege durch DiiiDiii" },
+  { "id": "t-awp-top-mid", "re": "top mid.*4/4|4/4.*top mid", "src": "Keys 3: T-AWP Top Mid 4/4" },
+  { "id": "plants", "re": "plants?\\W+A\\W+3\\W+B\\W+3|\\bA\\W+plants 3\\b[\\s\\S]{0,120}\\bB\\W+plants 3\\b", "src": "T Overview: Plants A 3 · B 3" },
+  { "id": "planter-a", "re": "DiiiDiii.{0,20}\\[2/3\\]", "src": "A-Planter DiiiDiii [2/3]" },
+  { "id": "planter-b", "re": "stakson.{0,20}\\[2/3\\]", "src": "B-Planter stakson [2/3]" },
+  { "id": "first-contact", "re": "first contact.*\\[7/9\\]", "src": "Erster Kontakt Mid [7/9]" },
+  { "id": "xbox-read", "re": "xbox.*short.*\\[3/3\\]", "src": "T1 Read: Xbox-Smoke 1:52 -> short A [3/3]" },
+  { "id": "util-upper-tunnel", "re": "upper tunnel.*\\[8/12\\]", "src": "CT Util-Signatur Upper Tunnel [8/12]" },
+  { "id": "util-long-doors", "re": "long doors.*\\[7/12\\]", "src": "CT Util-Signatur Long Doors [7/12]" },
+  { "id": "b-setup", "re": "\\bB\\b.*\\[12/12\\]", "src": "CT Setup: 1-2 auf B [12/12]" },
+  { "id": "ct-awp-long", "re": "(long A|A long).*\\[3/5\\]", "src": "CT-AWP Long A [3/5]" },
+  { "id": "ct-awp-mid-doors", "re": "mid doors.*\\[2/5\\]", "src": "CT-AWP Mid Doors [2/5]" },
+  { "id": "pushes", "re": "\\b10/12\\b", "src": "Fruehe Pushes in 10/12 Runden" },
+  { "id": "trades", "re": "\\b5/82\\b", "src": "Trades 5/82 (6 %)" },
+  { "id": "spot-mid-doors", "re": "Criminal_Boy.*mid doors.*\\[6/12\\]", "src": "Spot Criminal_Boy Mid Doors [6/12]" },
+  { "id": "no-full-save", "re": "no full save", "src": "Economy: kein Full-Save in 12 Runden" }
+ ]
+}

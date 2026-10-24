@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { MatchSummary } from '../../shared/model'
+import type { Prepare3DStatus } from '../../shared/assets3d'
 import { api } from '../api'
 import { mapLabel } from '../format'
+import { Icon } from '../icons'
 
 export function Library({ onOpen, onAnalyze }: { onOpen: (id: string) => void; onAnalyze: (ids: string[]) => void }) {
   const [list, setList] = useState<MatchSummary[]>([])
@@ -12,9 +14,15 @@ export function Library({ onOpen, onAnalyze }: { onOpen: (id: string) => void; o
   const [queue, setQueue] = useState<string[]>([])
   const [errors, setErrors] = useState<string[]>([])
   const [drag, setDrag] = useState(false)
+  // 3D-Vorbereitung im Hintergrund (Main): Stand je Match für das Symbol
+  const [prep, setPrep] = useState<Record<string, Prepare3DStatus>>({})
 
   const refresh = () => api.listMatches().then(l => setList(l.sort((a, b) => b.parsedAt.localeCompare(a.parsedAt))))
   useEffect(() => { refresh(); return api.onProgress(setBusy) }, [])
+  useEffect(() => {
+    api.prepareStatus().then(l => setPrep(p => ({ ...Object.fromEntries(l.map(s => [s.id, s])), ...p })))
+    return api.onPrepareStatus(s => setPrep(p => ({ ...p, [s.id]: s })))
+  }, [])
 
   async function importFiles(files: string[]) {
     setQueue(q => [...q, ...files])
@@ -55,7 +63,7 @@ export function Library({ onOpen, onAnalyze }: { onOpen: (id: string) => void; o
       </div>
 
       <table className="matches">
-        <thead><tr><th /><th>Map</th><th>Teams</th><th>Score</th><th>Rounds</th><th>File</th><th>Imported</th><th /></tr></thead>
+        <thead><tr><th /><th>Map</th><th>Teams</th><th>Score</th><th>Rounds</th><th>File</th><th>Imported</th><th>3D</th><th /></tr></thead>
         <tbody>
           {list.map(m => (
             <tr key={m.id} onClick={() => onOpen(m.id)}>
@@ -66,12 +74,23 @@ export function Library({ onOpen, onAnalyze }: { onOpen: (id: string) => void; o
               <td>{m.rounds}</td>
               <td className="muted small">{m.fileName}</td>
               <td className="muted small">{new Date(m.parsedAt).toLocaleString('en-GB')}</td>
+              <td>{!m.error3d && <Prep3D s={prep[m.id]} />}</td>
               <td><button className="ghost" onClick={async e => { e.stopPropagation(); if (confirm('Delete match?')) { await api.deleteMatch(m.id); refresh() } }}>🗑</button></td>
             </tr>
           ))}
-          {list.length === 0 && <tr><td colSpan={8} className="muted center">No demos imported yet.</td></tr>}
+          {list.length === 0 && <tr><td colSpan={9} className="muted center">No demos imported yet.</td></tr>}
         </tbody>
       </table>
     </div>
   )
+}
+
+/** Würfel: grün = 3D bereit, Orange + % = wird vorbereitet, rot = Fehler, blass = noch nicht geprüft bzw. wartet */
+function Prep3D({ s }: { s?: Prepare3DStatus }) {
+  const [cls, title] = !s ? ['', '3D is prepared when you open this demo']
+    : s.state === 'ready' ? ['ok', '3D replay ready']
+      : s.state === 'error' ? ['bad', `3D preparation failed: ${s.msg}`]
+        : s.state === 'queued' ? ['', '3D preparation queued']
+          : ['run', `Preparing 3D: ${s.msg} (${s.pct} %)`]
+  return <span className={`prep3d ${cls}`} title={title}><Icon name="cube" size={15} />{s?.state === 'building' && <small>{s.pct}%</small>}</span>
 }

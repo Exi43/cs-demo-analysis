@@ -10,6 +10,7 @@ export default defineConfig({
         input: {
           index: resolve('src/main/index.ts'),
           parser: resolve('src/main/parser-process.ts'),
+          assets3d: resolve('src/main/assets3d/worker.ts'),
         },
       },
     },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { MatchData } from '../shared/model'
 import type { Ref } from '../shared/analysis/rounds'
 import { api, type MapMeta } from './api'
@@ -10,25 +10,38 @@ import { ReportView } from './views/ReportView'
 import { mapLabel } from './format'
 import { Icon } from './icons'
 
+// 3D-Replay erst beim Öffnen laden (three, Engine und Audio holt die View danach selbst per import())
+const Replay3DView = lazy(() => import('./replay3d/Replay3DView').then(m => ({ default: m.Replay3DView })))
+// Entwicklung: #hudpreview/<fixture> zeigt nur die Vorschau des Übertragungs-HUDs (Selbsttest CSDA_VIEW=hudpreview/normal)
+const HudPreview = lazy(() => import('./replay3d/hud/Preview').then(m => ({ default: m.HudPreview })))
+const PREVIEW = location.hash.startsWith('#hudpreview')
+
 const loadImg = (src?: string) => new Promise<HTMLImageElement | undefined>(res => {
   if (!src) return res(undefined)
   const i = new Image(); i.onload = () => res(i); i.onerror = () => res(undefined); i.src = src
 })
 
-type View = 'library' | 'report' | 'replay' | 'multi' | 'stats'
+type View = 'library' | 'report' | 'replay' | 'replay3d' | 'multi' | 'stats'
 export interface Jump { round: number; tick: number; n: number }
 
 const NAV: [View, string, string][] = [
-  ['report', 'Analysis', 'analysis'], ['replay', '2D replay', 'replay'], ['multi', 'Multi-round', 'multi'], ['stats', 'Stats', 'stats'],
+  ['report', 'Analysis', 'analysis'], ['replay', '2D replay', 'replay'], ['replay3d', '3D replay', 'cube'], ['multi', 'Multi-round', 'multi'], ['stats', 'Stats', 'stats'],
 ]
 
 export function App() {
+  return PREVIEW ? <Suspense fallback={null}><HudPreview /></Suspense> : <MainApp />
+}
+
+function MainApp() {
   const [openIds, setOpenIds] = useState<string[]>([])
   const [matches, setMatches] = useState<MatchData[]>([])
   const [cur, setCur] = useState(0)
   const [map, setMap] = useState<{ meta: MapMeta; img?: HTMLImageElement; lower?: HTMLImageElement }>()
   const [view, setView] = useState<View>('library')
   const [jump, setJump] = useState<Jump>()
+  // Sprünge aus der Analyse öffnen das zuletzt benutzte Replay (2D oder 3D)
+  const [replayKind, setReplayKind] = useState<'replay' | 'replay3d'>('replay')
+  const [reload, setReload] = useState(0)
   const [error, setError] = useState<string>()
   const [importing, setImporting] = useState<{ file: string; pct: number; msg: string } | null>(null)
 
@@ -57,15 +70,16 @@ export function App() {
       const [img, lower] = await Promise.all([loadImg(meta.image), loadImg(meta.lowerImage)])
       setMap({ meta, img, lower }); setMatches(ms)
     })().catch(e => setError(String(e)))
-  }, [openIds.join()])
+  }, [openIds.join(), reload])
 
   const match = matches[cur]
   const openRef = (r: Ref) => {
     const i = matches.findIndex(m => m.id === r.matchId)
     if (i >= 0) setCur(i)
-    setView('replay'); setJump({ round: r.round, tick: r.tick, n: Date.now() })
+    setView(replayKind); setJump({ round: r.round, tick: r.tick, n: Date.now() })
   }
   const open = (ids: string[]) => { setOpenIds(ids); setView('report') }
+  const go = (v: View) => { setView(v); if (v === 'replay' || v === 'replay3d') setReplayKind(v) }
 
   return (
     <div className="app">
@@ -89,7 +103,7 @@ export function App() {
               </div>
             )}
             {NAV.map(([k, label, icon]) => (
-              <button key={k} className={`nav ${view === k ? 'on' : ''}`} disabled={!match} onClick={() => setView(k)}>
+              <button key={k} className={`nav ${view === k ? 'on' : ''}`} disabled={!match} onClick={() => go(k)}>
                 <Icon name={icon} /> {k === 'report' && matches.length > 1 ? `${label} (${matches.length})` : label}
               </button>
             ))}
@@ -108,6 +122,11 @@ export function App() {
         {view !== 'library' && !match && !error && <div className="center muted pad">Loading {openIds.length > 1 ? `${openIds.length} demos` : 'match'}…</div>}
         {match && map && view === 'report' && <ReportView matches={matches} onRef={openRef} />}
         {match && map && view === 'replay' && <ReplayView key={match.id} match={match} map={map.meta} img={map.img} lowerImg={map.lower} jump={jump} />}
+        {match && map && view === 'replay3d' && (
+          <Suspense fallback={<div className="center muted pad">Loading 3D replay…</div>}>
+            <Replay3DView key={match.id} match={match} map={map.meta} img={map.img} lowerImg={map.lower} jump={jump} onReimported={() => setReload(n => n + 1)} onExit={() => go('replay')} />
+          </Suspense>
+        )}
         {match && map && view === 'multi' && <MultiRoundView key={match.id} match={match} map={map.meta} img={map.img} lowerImg={map.lower} />}
         {match && view === 'stats' && <StatsView key={match.id} match={match} />}
       </main>

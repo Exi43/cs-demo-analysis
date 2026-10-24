@@ -1,0 +1,73 @@
+/* Teamleisten (Entwurf v2, Bild 6/7): .tb-L = CT links, .tb-R = T rechts gespiegelt. Füllung = HP % in den an Bild 6/7 gemessenen Farben.
+   Maße in 1080p-px (.hud zoomt). Zeilen sind klickbar (pointer-events: auto, .hud lässt sonst die Maus zur 3D-Szene durch). */
+.tb { position: absolute; top: 556px; width: 308px; display: flex; flex-direction: column; gap: 6px; }
+.tb-L { left: 16px; }
+.tb-R { right: 16px; align-items: flex-end; }
+.tb-tag {
+  height: 30px; width: max-content; padding: 0 10px; display: inline-flex; align-items: center;
+  font: 700 15px var(--f); letter-spacing: .6px; color: #0b1630; text-transform: uppercase;
+}
+.tb-tag.CT { background: #a6cce9; }
+.tb-tag.T { background: #f1dc9a; }
+.tb-tag span { margin-left: 8px; font-size: 11px; opacity: .65; }
+
+.tb-row { position: relative; width: 308px; height: 70px; flex: none; overflow: hidden; background: var(--rest); cursor: pointer; pointer-events: auto; }
+.tb-row:hover { background: rgba(175, 175, 188, .55); }
+.tb-row.dead { background: var(--dead); }
+.tb-row.focus::after { content: ''; position: absolute; inset: 0; box-shadow: inset 0 0 0 2px #f4ecd0; pointer-events: none; }
+.tb-fill { position: absolute; top: 0; bottom: 0; }
+.tb-L .tb-fill { left: 14px; }
+.tb-R .tb-fill { right: 14px; }
+.tb-row.CT .tb-fill { background: var(--ct-fill); }
+.tb-row.T .tb-fill { background: var(--t-fill); }
+.tb-strip { position: absolute; top: 0; bottom: 0; width: 14px; font: 700 14px/22px var(--f); text-align: center; color: #0b1630; }
+.tb-L .tb-strip { left: 0; }
+.tb-R .tb-strip { right: 0; }
+.tb-row.CT .tb-strip { background: var(--ct-strip); }
+.tb-row.T .tb-strip { background: var(--t-strip); }
+
+.tb-nm { position: absolute; top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.tb-L .tb-nm { left: 22px; align-items: flex-start; }
+.tb-R .tb-nm { right: 22px; align-items: flex-end; }
+.tb-name { font: 700 17px/18px var(--f); max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .3px; }
+.tb-kd { display: flex; align-items: center; gap: 4px; font: 700 14px/16px var(--fm); }
+.tb-kd .hud-ico { width: 15px; height: 15px; color: #a9c8ee; }
+.tb-row.T .tb-kd .hud-ico { color: #ecdca8; }
+.tb-kd b { margin-right: 6px; }
+.tb-money { font: 700 14px/16px var(--fm); color: var(--money); }
+.tb-money i { font-style: normal; color: #cfd6df; margin-right: 4px; }
+.tb-row.dead :is(.tb-name, .tb-kd, .tb-money) { opacity: .75; }
+
+.tb-row .hud-av { position: absolute; bottom: 0; width: 58px; height: 64px; }
+.tb-L .hud-av { left: 116px; }
+.tb-R .hud-av { right: 116px; }
+.tb-row.dead .hud-av { filter: grayscale(1) brightness(.75); }
+.tb-voice { position: absolute; top: 3px; width: 16px; height: 16px; color: #7dff6a; filter: drop-shadow(0 0 2px #000); }
+.tb-voice.off { color: #ff5a4f; }
+.tb-L .tb-voice { left: 155px; }
+.tb-R .tb-voice { right: 155px; }
+.tb-stars { position: absolute; top: 0; font-size: 9px; letter-spacing: 1px; text-shadow: 0 0 2px #000; }
+.tb-L .tb-stars { left: 196px; }
+.tb-R .tb-stars { right: 196px; }
+
+.tb-row .hud-img { filter: drop-shadow(0 0 1px rgba(0, 0, 0, .55)); }
+.tb-row .hud-img.flip { transform: scaleX(-1); }
+.tb-wp { position: absolute; top: 9px; display: flex; }
+.tb-L .tb-wp { left: 182px; }
+.tb-R .tb-wp { right: 182px; }
+.tb-wp .hud-img { height: 22px; max-width: 62px; object-fit: contain; }
+.tb-util { position: absolute; bottom: 6px; display: flex; gap: 3px; align-items: flex-end; }
+.tb-L .tb-util { left: 182px; }
+.tb-R .tb-util { right: 182px; flex-direction: row-reverse; }
+.tb-util .hud-img { height: 20px; opacity: .92; }
+.tb-hp { position: absolute; top: 4px; font: 700 32px/34px var(--fm); letter-spacing: -.5px; }
+.tb-L .tb-hp { right: 8px; }
+.tb-R .tb-hp { left: 8px; }
+.tb-gear { position: absolute; bottom: 5px; display: flex; gap: 4px; align-items: flex-end; }
+.tb-L .tb-gear { right: 8px; flex-direction: row-reverse; }
+.tb-R .tb-gear { left: 8px; }
+.tb-arm { width: 14px; height: 20px; color: #e8e8e8; }
+.tb-gear .hud-img { height: 16px; }
+.tb-skull { position: absolute; top: 9px; width: 50px; height: 50px; color: rgba(235, 235, 235, .55); }
+.tb-L .tb-skull { right: 18px; }
+.tb-R .tb-skull { left: 18px; }

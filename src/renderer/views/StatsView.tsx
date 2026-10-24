@@ -90,7 +90,7 @@ function Economy({ match }: { match: MatchData }) {
   return (
     <div className="stat-team">
       <h3>Economy per round</h3>
-      <div className="eco">
+      <div className="eco-chart">
         {match.rounds.map(r => (
           <div key={r.num} className="eco-col" title={`R${r.num}\nCT ${r.teamOnSide.CT}: $${r.equipValue.CT} (${BUY_LABEL[r.buy.CT]})\nT ${r.teamOnSide.T}: $${r.equipValue.T} (${BUY_LABEL[r.buy.T]})`}>
             {match.teams.map(team => {

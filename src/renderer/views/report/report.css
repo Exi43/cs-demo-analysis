@@ -1,0 +1,124 @@
+/* Anti-Strat-Ansicht (Pro-Analyse). Wird vor styles.css geladen: eigene rp-Klassen, Overrides mit höherer Spezifität */
+.rp-title { font-size: 22px; margin: 18px 0 0; }
+.rp-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 10px; }
+.rp-legend > span { display: inline-flex; align-items: center; gap: 4px; }
+.rp-jump { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: var(--bg); padding: 8px 0; margin-top: 12px; border-bottom: 1px solid var(--line); }
+.rp-jump > button { font-weight: 600; }
+.rp-export { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.rp-export button { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.rp-export button:hover { color: var(--text); }
+.report h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 16px 0 6px; display: flex; align-items: center; gap: 6px; }
+.report code { font-size: 12px; background: var(--panel3); padding: 0 4px; border-radius: 4px; }
+.rp-card { background: var(--panel); border-radius: var(--radius); padding: 10px 12px; }
+.rp-card h3 { margin-top: 0; }
+
+/* Keys */
+.rp-keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.rp-key { border-top: 3px solid var(--accent); display: flex; flex-direction: column; gap: 8px; }
+.rp-key-n { color: var(--accent); font-weight: 800; display: flex; align-items: center; gap: 4px; }
+.rp-key-f { margin-top: auto; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+
+/* Zeilen, Tags, Chips */
+.rp-lines { display: flex; flex-direction: column; gap: 2px; }
+.rp-line { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; }
+.rp-ico { min-width: 22px; flex: none; display: flex; justify-content: center; padding-top: 2px; color: var(--accent); }
+.rp-txt { flex: 1; min-width: 0; }
+.rp-kind { flex: none; width: 84px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); padding-top: 2px; }
+.rp-line.read .rp-kind { color: var(--ct); }
+.rp-line.counter .rp-kind { color: var(--good); }
+.rp-warn, .rp-line.care .rp-kind { color: #f0c040; }
+.rp-counter { margin-top: 4px; padding: 3px 8px; border-left: 3px solid var(--good); background: #16281d; border-radius: 0 6px 6px 0; }
+.rp-chips { display: inline-flex; flex-wrap: wrap; gap: 3px; vertical-align: middle; }
+.rp-chips .rchip { padding: 1px 6px; font-weight: 600; }
+.rchip.n { background: var(--panel3); color: var(--text); }
+.rp-tag { display: inline-flex; gap: 4px; align-items: center; font-size: 10px; font-weight: 800; letter-spacing: .4px; border-radius: 4px; padding: 1px 6px; vertical-align: middle; }
+.rp-tag i { font-style: normal; font-weight: 600; }
+.rp-tag.habit { background: var(--accent); color: #fff; }
+.rp-tag.pattern { background: #6a3a22; color: #ffc6a8; }
+.rp-tag.once { background: var(--panel3); color: var(--muted); }
+
+/* Tabellen */
+.rp-table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: var(--radius); overflow: hidden; font-size: 13px; }
+.rp-table th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 7px 10px; white-space: nowrap; }
+.rp-table td { padding: 6px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+.rp-table .rp-line { padding: 0; }
+.rp-rounds td { vertical-align: middle; }
+.rp-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-push { display: inline-flex; gap: 4px; align-items: center; font-size: 11px; font-weight: 700; text-transform: uppercase; border-radius: 4px; padding: 1px 6px; }
+.rp-push.push { background: #4a1d1d; color: var(--bad); }
+.rp-push.forward { background: var(--panel3); }
+.rp-buy { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
+
+/* Heatmap */
+.rp-heat { display: grid; gap: 3px; background: var(--panel); border-radius: var(--radius); padding: 8px; }
+.rp-heat-h { font-size: 11px; color: var(--muted); text-align: center; padding: 2px; }
+.rp-heat-l { font-weight: 600; font-size: 13px; padding: 4px 6px; align-self: center; }
+.rp-heat-c { background: var(--panel2); border-radius: 6px; padding: 4px; display: flex; align-items: center; justify-content: center; min-height: 30px; }
+
+/* Spielzüge */
+.rp-plays { display: flex; flex-direction: column; gap: 8px; }
+.rp-play summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; list-style: none; }
+.rp-play summary::-webkit-details-marker { display: none; }
+.rp-play summary::before { content: ''; border: 5px solid transparent; border-left: 7px solid var(--muted); margin-right: -2px; transition: transform .12s; transform-origin: 3px 5px; }
+.rp-play[open] summary::before { transform: rotate(90deg); }
+.rp-play-id { background: var(--t); color: #000; font-weight: 800; border-radius: 5px; padding: 0 6px; font-size: 12px; }
+.rp-play-name { font-size: 15px; }
+.rp-site { font-weight: 800; font-size: 11px; border-radius: 4px; padding: 0 6px; }
+.rp-site.A { background: #7a3b1d; } .rp-site.B { background: #2b4a7a; }
+.rp-kindtag { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.rp-wl { font-weight: 800; }
+.rp-play-body { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); padding-top: 8px; }
+.rp-roles { display: flex; flex-direction: column; border-left: 2px solid var(--panel3); margin: 4px 0 4px 10px; padding-left: 8px; }
+
+/* Blöcke, Spalten, Plan */
+.rp-blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; margin-top: 14px; }
+.rp-block { border-top: 3px solid var(--accent); }
+.rp-block-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.rp-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 16px; align-items: start; }
+.rp-cols > .rp-card h3 { margin-top: 0; }
+.rp-plan { margin: 0; padding-left: 20px; }
+.rp-limits { margin: 0; padding-left: 18px; }
+
+/* PDF über window.print(): helles Papier, ohne Navigation */
+@media print {
+  @page { size: A4; margin: 8mm; }
+  html:root {
+    --bg: #fff; --panel: #fff; --panel2: #f1f1f1; --panel3: #e4e4e4; --line: #d4d4d4; --text: #111; --muted: #555;
+    --good: #17803d; --bad: #c62828; --accent: #d9480f; --t: #e0a030; --ct: #2f6fc4;
+    print-color-adjust: exact; -webkit-print-color-adjust: exact;
+  }
+  html body, html #root, html .app { display: block; height: auto; background: #fff; }
+  html .app main { overflow: visible; }
+  html .sidebar, html .team-pick, html .rp-jump, html .toast, html .report > p.muted { display: none; }
+  html .report { max-width: none; margin: 0; padding: 0; font-size: 8pt; line-height: 1.3; }
+  html .wpn { filter: invert(1); }
+  html .report h2 { margin: 8px 0 3px; font-size: 11pt; break-after: avoid; }
+  html .report h3 { margin: 6px 0 2px; font-size: 7.5pt; break-after: avoid; }
+  html .rp-title { font-size: 14pt; margin: 0; }
+  html .tiles { margin-top: 4px; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  html .tile { padding: 3px 8px; border: 1px solid var(--line); }
+  html .tile-num { font-size: 13pt; margin: 0; }
+  html .rp-legend { margin-top: 4px; font-size: 6.5pt; }
+  html .rp-card, html .rp-heat, html .rp-table { border: 1px solid var(--line); }
+  html .rp-card { padding: 4px 6px; }
+  html .rp-key, html .rp-block, html .rp-line, html .rp-table tr, html .rp-heat { break-inside: avoid; }
+  html .rp-line { padding: 1px 0; }
+  html .rp-table { font-size: 7.5pt; }
+  html .rp-table th, html .rp-table td { padding: 2px 5px; }
+  html .rp-heat-c { min-height: 0; padding: 1px; }
+  html .rp-heat-l, html .rp-play-name { font-size: 8pt; }
+  html .rchip { font-size: 6.5pt; padding: 0 3px; }
+  html .rchip.w { background: #dff3e6; color: #17803d; } html .rchip.l { background: #fbe1e1; color: #c62828; }
+  html .rating.good { background: #dff3e6; } html .rating.bad { background: #fbe1e1; }
+  html .rp-counter { background: #eef7f0; padding: 1px 6px; margin-top: 2px; }
+  html .rp-tag.pattern { background: #ffe1d1; color: #8a3a12; }
+  html .rp-push.push { background: #fbe1e1; }
+  html .rp-site { color: #fff; }
+  html .rp-play summary::before { display: none; }
+  html .rp-play-body { margin-top: 3px; padding-top: 3px; }
+  html .rp-roles { font-size: 7.5pt; line-height: 1.2; margin: 2px 0 2px 6px; }
+  html .rp-blocks { display: block; columns: 2; column-gap: 6px; margin-top: 6px; }
+  html .rp-blocks > .rp-card { margin-bottom: 4px; }
+  html .rp-rounds td { padding: 0 5px; }
+  html .rp-keys { gap: 4px; }
+}

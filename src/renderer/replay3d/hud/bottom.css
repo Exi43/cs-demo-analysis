@@ -1,0 +1,198 @@
+/* HUD unten (Paket HU): Spieler-Panel + Geld/Voice, Demo-Leiste, Zahnrad-Menü, Hotkeys-Dialog. Maße in 1080p-px wie Entwurf v2
+   (mockup-v2.html #dock, #demo, .menu); Farben/Tokens aus base.css. Klickbare Teile setzen pointer-events: auto (.hud lässt durch). */
+
+/* ---------- Spieler-Panel (Bild 4) + Geld/Voice (Bild 8): Dock 8 px über der Demo-Leiste ---------- */
+.hu-dock { position: absolute; left: 0; right: 0; bottom: 104px; height: 72px; }
+.hu-panel { position: absolute; left: 50%; bottom: 0; width: 460px; transform: translateX(-50%); }
+.hu-prow { height: 30px; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 6px 4px 70px; }
+.hu-utl, .hu-act { display: flex; align-items: flex-end; }
+.hu-utl { gap: 4px; font-size: 22px; }
+.hu-act { gap: 10px; font-size: 26px; margin-left: auto; }
+.hu-ammo { display: flex; align-items: flex-end; gap: 6px; font: 700 26px/24px var(--fm); }
+.hu-ammo .sep { width: 2px; height: 20px; background: rgba(255, 255, 255, .8); }
+.hu-ammo .res { font-size: 18px; color: #d8d8d8; }
+.hu-ammo .hud-ico { width: 18px; height: 22px; }
+.hu-pbar { position: relative; height: 38px; background: rgba(20, 22, 28, .78); box-shadow: 0 2px 8px rgba(0, 0, 0, .45); }
+.hu-hpf, .hu-dmg { position: absolute; top: 0; bottom: 0; }
+.hu-pbar.CT .hu-hpf { background: linear-gradient(180deg, #5682b4, #3e6797); }
+.hu-pbar.T .hu-hpf { background: linear-gradient(180deg, #b39a3e, #8d7627); }
+.hu-dmg { background: linear-gradient(180deg, #e0605f, #c33f42); transition: opacity .4s ease-out; }
+.hu-pn {
+  position: relative; max-width: 380px; padding-left: 66px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font: 700 21px/38px var(--f); letter-spacing: .6px; text-transform: uppercase; text-shadow: 0 1px 2px rgba(0, 0, 0, .6);
+}
+.hu-php { position: absolute; right: 12px; top: 0; display: flex; align-items: center; height: 38px; font: 700 26px/38px var(--fm); }
+.hu-php .hud-ico { font-size: 24px; }
+.hud-av.hu-pav { position: absolute; left: 6px; bottom: 3px; z-index: 2; width: 52px; height: 52px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .85); font-size: 18px; }
+.hu-pav img { border-radius: 50%; }
+.hu-purse { position: absolute; right: calc(50% + 250px); bottom: 2px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.hu-voice { display: flex; align-items: center; gap: 6px; font: 700 12px var(--f); letter-spacing: .4px; color: #e2e2e2; text-transform: uppercase; }
+.hu-voice .hud-ico { width: 16px; height: 16px; }
+.hu-voice.talk .hud-ico { color: #7dff6a; }
+.hu-cash { display: flex; align-items: center; gap: 10px; font: 700 34px/1 var(--fm); }
+.hu-cash .hud-ico { width: 32px; height: 32px; color: #8be07a; }
+.hu-cash .hud-ico.off { color: rgba(255, 255, 255, .28); }
+.hu-cash.CT { color: #cfe3f5; } .hu-cash.T { color: #efe08c; }
+
+/* ---------- Demo-Leiste (huddemocontroller: 96 px = 50 Zeitleiste + 41 Steuerzeile + 5) ---------- */
+.hu-demo {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 96px; pointer-events: auto;
+  background: var(--hud-bg); backdrop-filter: blur(2px); box-shadow: 0 0 2px #000; transition: transform .25s, opacity .25s;
+}
+.hu-demo.hide { transform: translateY(100%); opacity: 0; pointer-events: none; }
+.hu-demo button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; }
+.hu-tl { position: absolute; left: 10px; right: 10px; top: 0; height: 50px; cursor: pointer; }
+.hu-rm { position: absolute; top: 30px; height: 8px; }
+.hu-rm.even { background: rgba(255, 255, 255, .314); } .hu-rm.odd { background: rgba(255, 255, 255, .125); }
+.hu-rm.cur { background: rgba(255, 255, 255, .55); }
+.hu-demo .hu-ev {
+  position: absolute; top: 4px; width: 22px; height: 22px; margin-left: -11px; display: block; font-size: 22px; color: #9a9a9a;
+  filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, .25)); transition: transform .05s;
+}
+.hu-demo .hu-ev:hover { transform: translateY(-2px) scale(1.2); color: #fff; }
+.hu-demo .hu-ev .hud-ico { display: block; }
+.hu-ev.kill { color: #d0d0d0; } .hu-ev.death { color: #b0b0b0; } .hu-ev.plant { color: #ffb136; }
+.hu-ev.defuse { color: #47c8f3; } .hu-ev.explode { color: #ff6a3d; }
+.hu-thumb { position: absolute; top: 26px; width: 10px; height: 16px; margin-left: -5px; background: #fff; border-radius: 1px; box-shadow: 0 0 3px rgba(0, 0, 0, .6); pointer-events: none; }
+.hu-ctrl { position: absolute; left: 5px; right: 5px; top: 50px; height: 41px; display: flex; align-items: center; font: 500 18px var(--f); color: #e9e9e9; white-space: nowrap; }
+.hu-demo .hu-btn {
+  height: 36px; display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 5px; margin: 0 1px;
+  background: rgba(255, 255, 255, .012); border: 1px solid rgba(255, 255, 255, .028); border-radius: 2px;
+}
+.hu-demo .hu-btn:hover { background: rgba(255, 255, 255, .157); border-color: rgba(255, 255, 255, .25); }
+.hu-demo .hu-btn:disabled { opacity: .35; cursor: default; }
+.hu-btn .hud-ico { width: 26px; height: 26px; color: #fff; }
+.hu-grp { position: relative; display: flex; align-items: center; flex: none; margin-left: 26px; }
+.hu-demo .hu-play { width: 82px; justify-content: center; border-radius: 3px; }
+.hu-play .hud-ico { width: 30px; height: 30px; }
+.hu-grp.speed { margin-left: 15px; }
+.hu-spd { position: relative; width: 140px; height: 36px; cursor: pointer; }
+.hu-spd .track { position: absolute; left: 6px; right: 6px; top: 12px; height: 4px; background: rgba(255, 255, 255, .25); border-radius: 2px; }
+.hu-spd .knob { position: absolute; top: 6px; width: 12px; height: 16px; margin-left: -6px; background: #fff; border-radius: 2px; }
+.hu-spd .ticks span { position: absolute; bottom: 2px; display: flex; transform: translateX(-50%); opacity: .5; }
+.hu-spd .ticks .hud-ico { width: 5px; height: 10px; margin-left: -2px; transform: scaleX(-1); }
+.hu-spd .ticks .hud-ico.pz { width: 11px; height: 11px; margin: 0; transform: none; }
+.hu-spd .ticks i { display: block; width: 2px; height: 4px; background: rgba(255, 255, 255, .6); }
+.hu-scale { width: 56px; padding-left: 8px; font-family: var(--fm); }
+.hu-time { margin-left: 20px; font-family: var(--fm); flex: none; }
+.hu-time .k { margin-left: 10px; color: #bdbdbd; }
+.hu-grp.tctl > .hud-ico { width: 24px; height: 24px; margin: 0 4px; color: #ddd; }
+.hu-demo .hu-btn.prev .hud-ico { transform: rotate(180deg); }
+.hu-demo .hu-rnum { min-width: 98px; justify-content: center; }
+.hu-demo .hu-arrow { width: 32px; justify-content: center; }
+.hu-arrow .hud-ico { width: 12px; height: 22px; }
+.hu-demo .hu-arrow.prev .hud-ico { transform: none; } /* Pfeil zeigt von sich aus nach links: nicht wie Runde zurück drehen */
+.hu-demo .hu-arrow.next .hud-ico { transform: scaleX(-1); }
+.hu-demo .hu-pname { width: 190px; flex: 0 1 190px; min-width: 60px; justify-content: center; overflow: hidden; }
+.hu-pname.CT { color: var(--ct); } .hu-pname.T { color: #eadbb1; }
+.hu-demo .hu-next { margin-left: 10px; }
+.hu-next .hud-ico.da { width: 15px; height: 16px; transform: scaleX(-1); }
+.hu-spacer { flex: 1; min-width: 8px; }
+.hu-demo .hu-cam { padding: 0 10px 0 6px; cursor: default; }
+.hu-cam .seg { display: flex; gap: 2px; margin-left: 4px; }
+.hu-demo .hu-cam .seg button { padding: 3px 8px; border-radius: 2px; font-weight: 500; color: #a8a8a8; }
+.hu-demo .hu-cam .seg button.on { background: rgba(255, 255, 255, .16); color: #fff; font-weight: 700; }
+.hu-demo .hu-xray, .hu-demo .hu-gear { width: 36px; justify-content: center; margin-left: 8px; }
+.hu-xray .hud-ico { width: 24px; height: 24px; color: #8a8a8a; }
+.hu-demo .hu-xray.on { background: rgba(80, 160, 255, .22); border-color: rgba(120, 180, 255, .6); }
+.hu-xray.on .hud-ico { color: #fff; }
+.hu-gear .hud-ico { color: #808080; } .hu-gear.open .hud-ico { color: #fff; }
+.hu-demo .hu-back { margin-left: 25px; margin-right: 6px; padding: 0 12px; }
+
+/* ---------- Menüs (Zahnrad, Runden, Spieler) ---------- */
+.hu-menu {
+  position: absolute; z-index: 20; display: flex; flex-direction: column; padding: 6px 0; pointer-events: auto;
+  background: rgba(28, 30, 34, .96); border: 2px solid rgba(20, 20, 22, .95); box-shadow: 0 4px 18px rgba(0, 0, 0, .6);
+  font: 500 17px var(--f); color: #e0e0e0; white-space: nowrap;
+}
+.hu-menu button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: left; }
+.hu-menu h4 { margin: 4px 14px 6px; font: 700 13px var(--f); letter-spacing: 1px; color: #9aa0a8; text-transform: uppercase; }
+.hu-menu .it { display: flex; align-items: center; gap: 10px; padding: 7px 14px; }
+.hu-menu .it:hover { background: rgba(255, 255, 255, .12); }
+.hu-menu .it.sel { background: rgba(255, 255, 255, .07); font-weight: 700; }
+.hu-menu .it.CT { color: var(--ct); } .hu-menu .it.T { color: #eadbb1; }
+.hu-menu .it.dead { opacity: .4; }
+.hu-menu .it .hud-av { width: 22px; height: 22px; font-size: 10px; }
+.hu-menu .it.dead .hud-av { filter: grayscale(1); }
+.hu-menu .it .hud-ico { width: 16px; height: 16px; margin-left: auto; }
+.hu-menu .it .w { margin-left: auto; } .hu-menu .it .w.CT { color: var(--ct); } .hu-menu .it .w.T { color: var(--t); }
+.hu-list { bottom: calc(100% + 56px); left: 0; overflow: auto; }
+.hu-rlist { width: 200px; max-height: 520px; }
+.hu-plist { width: 260px; }
+
+/* Höhe wie Entwurf v2 (652 px); der Rest scrollt, die Fußzeile (Hotkeys, Re-import) bleibt stehen */
+.hu-settings {
+  right: 54px; bottom: 100px; width: 430px; max-height: 652px; padding: 10px 0 0; overflow: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .25) transparent;
+}
+.hu-settings .sep { height: 1px; margin: 6px 14px; background: rgba(255, 255, 255, .08); }
+.hu-chk { position: relative; display: flex; gap: 12px; padding: 6px 16px; cursor: pointer; white-space: normal; }
+.hu-chk:hover { background: rgba(255, 255, 255, .07); }
+.hu-chk input, .hu-mini input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.hu-chk .box, .hu-mini .box { flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin-top: 1px; border: 2px solid #9a9a9a; border-radius: 3px; }
+.hu-chk input:checked + .box, .hu-mini input:checked + .box { background: #3b7fd1; border-color: #6aa6ef; }
+.hu-chk input:checked + .box::after, .hu-mini input:checked + .box::after {
+  content: ''; width: 6px; height: 11px; border: solid #fff; border-width: 0 3px 3px 0; transform: rotate(45deg) translate(-1px, -1px);
+}
+.hu-chk input:focus-visible + .box, .hu-mini input:focus-visible + .box { outline: 2px solid #8ec7ff; outline-offset: 1px; }
+.hu-chk.dis { opacity: .35; cursor: default; }
+.hu-chk .t { display: block; font: 700 18px var(--f); }
+.hu-chk .t small { margin-left: 6px; font: 500 12px var(--f); letter-spacing: .3px; color: #8ec7ff; }
+.hu-chk .e { display: block; margin-top: 2px; font: 400 12.5px/15px var(--f); color: #b6bcc4; }
+.hu-ui { display: grid; grid-template-columns: 1fr 1fr; }
+.hu-ui .hu-chk { padding: 5px 16px; }
+.hu-ui .hu-chk .t { font-size: 16px; }
+.hu-ui .hu-chk .box { width: 20px; height: 20px; }
+.hu-ui.off { opacity: .45; }
+.hu-menu h4.row { display: flex; align-items: center; justify-content: space-between; }
+.hu-mini { position: relative; display: flex; align-items: center; gap: 8px; font: 700 14px var(--f); letter-spacing: .3px; color: #e0e0e0; text-transform: none; cursor: pointer; }
+.hu-mini .box { width: 18px; height: 18px; margin: 0; }
+.hu-mini input:checked + .box::after { width: 5px; height: 9px; border-width: 0 2px 2px 0; }
+.hu-sld, .hu-row { display: flex; align-items: center; gap: 12px; padding: 8px 16px; font: 700 16px var(--f); }
+.hu-sld .hud-ico { width: 20px; height: 20px; }
+.hu-sld .l, .hu-row .l { width: 110px; }
+.hu-sld input {
+  flex: 1; height: 4px; margin: 0; -webkit-appearance: none; appearance: none; outline: none; cursor: pointer;
+  background: linear-gradient(90deg, #fff var(--v), rgba(255, 255, 255, .2) var(--v));
+}
+.hu-sld input::-webkit-slider-thumb { -webkit-appearance: none; width: 10px; height: 16px; background: #fff; border-radius: 2px; }
+.hu-sld .v { width: 44px; text-align: right; font-family: var(--fm); color: #cfcfcf; }
+.hu-seg { display: flex; gap: 2px; }
+.hu-menu .hu-seg button { padding: 3px 12px; border-radius: 2px; background: rgba(255, 255, 255, .06); color: #a8a8a8; font-weight: 500; }
+.hu-menu .hu-seg button.on { background: rgba(255, 255, 255, .2); color: #fff; font-weight: 700; }
+.hu-stats { padding: 2px 16px 6px; font: 500 13px var(--fm); color: #9aa0a8; }
+.hu-foot { position: sticky; bottom: 0; display: flex; gap: 8px; margin-top: 6px; padding: 8px 16px 12px; background: #1c1e22; box-shadow: 0 -1px 0 rgba(255, 255, 255, .08); }
+.hu-menu .hu-mbtn {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 2px;
+  background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .18); font-weight: 700;
+}
+.hu-menu .hu-mbtn:hover { background: rgba(255, 255, 255, .16); }
+.hu-mbtn .hud-ico { width: 18px; height: 18px; }
+.hu-menu .hu-mbtn.warn { border-color: rgba(255, 200, 90, .6); color: #ffd98a; }
+.hu-note { padding: 6px 16px 0; font: 400 12.5px/15px var(--f); color: #ffd98a; white-space: normal; }
+
+/* ---------- Hotkeys-Dialog ---------- */
+.hu-hk-back { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(0, 0, 0, .45); pointer-events: auto; }
+.hu-hk { width: 900px; max-height: calc(100% - 40px); padding: 14px 0 16px; overflow: auto; }
+.hu-hk header { display: flex; align-items: baseline; gap: 14px; padding: 0 18px 8px; }
+.hu-hk header b { font: 700 24px var(--f); color: #fff; }
+.hu-hk header span { font: 400 14px var(--f); color: #9aa0a8; }
+.hu-hk header .x { margin-left: auto; font: 700 24px var(--f); color: #9aa0a8; }
+.hu-hk .warn { margin: 0 18px 8px; padding: 6px 10px; border-left: 3px solid #ff4d4d; background: rgba(255, 60, 60, .14); font: 600 14px/18px var(--f); color: #ffb3b3; white-space: normal; }
+.hu-hk .cols { columns: 2; column-gap: 24px; padding: 0 4px; }
+.hu-hk .grp { break-inside: avoid; margin-bottom: 8px; }
+.hu-hk .kr { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 14px; font-size: 16px; }
+.hu-hk .kr .l { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.hu-hk .kr.bad .l { color: #ff8080; }
+.hu-menu .hu-hk-key {
+  min-width: 110px; height: 26px; padding: 0 10px; text-align: center; border-radius: 3px;
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .28); font: 700 14px var(--f); color: #d6dbe0;
+}
+.hu-menu .hu-hk-key:hover { background: rgba(255, 255, 255, .16); }
+.hu-menu .hu-hk-key.none { color: #6f7680; }
+.hu-menu .kr.bad .hu-hk-key { border-color: #ff4d4d; background: rgba(255, 60, 60, .22); color: #ffd0d0; }
+.hu-menu .hu-hk-key.rec { border-color: #8ec7ff; background: rgba(60, 140, 255, .3); color: #fff; }
+.hu-menu .hu-hk-del { width: 22px; height: 22px; text-align: center; border-radius: 2px; color: #8a9099; font-weight: 700; }
+.hu-menu .hu-hk-del:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.hu-menu .hu-hk-del:disabled { visibility: hidden; }
+.hu-hk footer { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 18px 0; }

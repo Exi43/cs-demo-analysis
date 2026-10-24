@@ -128,16 +128,17 @@ export interface Layer {
   players?: Set<string>
 }
 
-export function drawScene(ctx: CanvasRenderingContext2D, match: MatchData, view: View, img: HTMLImageElement | undefined, layers: Layer[], zoom: number) {
+/** zoom = Pixel pro Radar-Pixel (Lage), mark = Größe von Markern, Linien und Schrift (3D-Minimap: größer als zoom, sonst unlesbar) */
+export function drawScene(ctx: CanvasRenderingContext2D, match: MatchData, view: View, img: HTMLImageElement | undefined, layers: Layer[], zoom: number, mark = zoom) {
   const m = view.map
-  const s = zoom // Pixel pro Radar-Pixel
+  const s = mark
   ctx.save()
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
   ctx.fillStyle = '#0b0d11'
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
-  if (img) ctx.drawImage(img, 0, 0, 1024 * s, 1024 * s)
+  if (img) ctx.drawImage(img, 0, 0, 1024 * zoom, 1024 * zoom)
 
-  const P = (x: number, y: number): [number, number] => { const [a, b] = toRadar(m, x, y); return [a * s, b * s] }
+  const P = (x: number, y: number): [number, number] => { const [a, b] = toRadar(m, x, y); return [a * zoom, b * zoom] }
   const onLevel = (z: number) => (view.level === 'lower') === isLower(m, z)
   const nameOf = new Map(match.players.map(p => [p.steamid, p.name]))
   const sideOfIn = (r: Round, sid: string) => r.tracks.find(t => t.steamid === sid)?.side
@@ -156,7 +157,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, match: MatchData, view:
         const [x, y] = P(end[1], end[2])
         const left = (n.endTick - tick) / TICKRATE
         const grow = Math.min(1, (tick - n.detTick) / (TICKRATE * 0.8))
-        ctx.beginPath(); ctx.arc(x, y, (SMOKE_R / m.scale) * s * grow, 0, Math.PI * 2)
+        ctx.beginPath(); ctx.arc(x, y, (SMOKE_R / m.scale) * zoom * grow, 0, Math.PI * 2)
         ctx.fillStyle = COLORS.smoke; ctx.fill()
         ctx.strokeStyle = COLORS.smokeEdge; ctx.lineWidth = 1.5; ctx.stroke()
         ctx.fillStyle = '#111'; ctx.font = `bold ${11 * Math.max(1, s * 0.8)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
@@ -164,7 +165,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, match: MatchData, view:
       }
       if (n.type === 'molotov' && tick >= n.detTick && tick <= n.endTick && n.endTick > n.detTick) {
         const [x, y] = P(end[1], end[2])
-        ctx.beginPath(); ctx.arc(x, y, (FIRE_R / m.scale) * s, 0, Math.PI * 2)
+        ctx.beginPath(); ctx.arc(x, y, (FIRE_R / m.scale) * zoom, 0, Math.PI * 2)
         ctx.fillStyle = COLORS.molotov; ctx.fill(); ctx.strokeStyle = COLORS.molotovEdge; ctx.lineWidth = 1.5; ctx.stroke()
       }
       if ((n.type === 'flash' || n.type === 'he') && tick >= n.detTick && tick <= n.detTick + TICKRATE * 0.5) {

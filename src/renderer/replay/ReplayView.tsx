@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MatchData, Round, Side } from '../../shared/model'
-import type { MapMeta } from '../api'
+import { api, type MapMeta } from '../api'
 import { BOMB_TIME, COLORS, ROUND_TIME, TICKRATE, drawScene, frameAt, playerAt } from './scene'
 import { RoundStrip } from '../views/RoundStrip'
 import { Weapon } from '../weapons'
 import type { Jump } from '../App'
+import { decode3d, type CS3D } from '../../shared/cs3d'
+import { InputsOverlay, keysAt } from '../replay3d/InputsOverlay'
 
 const SPEEDS = [0.5, 1, 2, 4, 8]
 const NADE_INV: Record<string, RegExp> = { smoke: /smoke/i, flash: /flash/i, he: /high explosive/i, molotov: /molotov|incendiary/i, decoy: /decoy/i }
 
 /** Inventar bei Freezetime-Ende minus bereits geworfene Granaten */
-function invLeft(inv: string[], thrown: string[]) {
+export function invLeft(inv: string[], thrown: string[]) {
   const left = [...inv]
   for (const t of thrown) { const i = left.findIndex(w => NADE_INV[t]?.test(w)); if (i >= 0) left.splice(i, 1) }
   return left
@@ -25,6 +27,14 @@ export function ReplayView({ match, map, img, lowerImg, jump }: { match: MatchDa
   const [trail, setTrail] = useState(false)
   const [only, setOnly] = useState<Set<string>>(new Set()) // leer = alle Spieler zeigen
   const togglePlayer = (s: string) => setOnly(o => { const n = new Set(o); n.has(s) ? n.delete(s) : n.add(s); return n })
+  // Tasten-Overlay für genau einen gewählten Spieler; CS3D erst dann laden (null = Match ohne 3D-Daten)
+  const keysOf = only.size === 1 ? [...only][0] : undefined
+  const [d3, setD3] = useState<CS3D | null>()
+  useEffect(() => {
+    if (!keysOf || d3 !== undefined) return
+    setD3(null)
+    api.load3d(match.id).then(b => b && setD3(decode3d(b))).catch(e => console.warn('load3d', e))
+  }, [keysOf])
   const round = match.rounds[ri]
   const end = round.frameTicks[round.frameTicks.length - 1] ?? round.endTick
 
@@ -136,7 +146,10 @@ export function ReplayView({ match, map, img, lowerImg, jump }: { match: MatchDa
       <RoundStrip match={match} current={ri} onPick={goRound} />
       <div className="replay-body">
         <div className="side-col">{teamPanel('CT')}{teamPanel('T')}</div>
-        <div className="canvas-wrap" ref={wrapRef}><canvas ref={canvasRef} /></div>
+        <div className="canvas-wrap" ref={wrapRef} style={{ position: 'relative' }}>
+          <canvas ref={canvasRef} />
+          {keysOf && d3 && <InputsOverlay keys={keysAt(d3, keysOf, tick)} label={nameOf(keysOf)} />}
+        </div>
         <div className="side-col">
           <div className={`clock ${clockCls}`}>{clockCls === 'bomb' && <Weapon name="c4" h={26} />}{clock}</div>
           <div className="muted small">Round {round.num} · {round.winner} wins ({round.reason.replace(/_/g, ' ')})</div>

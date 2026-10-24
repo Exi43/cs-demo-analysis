@@ -3,6 +3,7 @@ const P: Record<string, string> = {
   library: 'M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v6H4zM14 15h6v6h-6z',
   analysis: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   replay: 'M8 5v14l11-7z',
+  cube: 'M12 2l9 5v10l-9 5-9-5V7zM3 7l9 5 9-5M12 12v10',
   multi: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17l9 5 9-5',
   stats: 'M3 5h18M3 12h18M3 19h18M9 5v14',
   bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',

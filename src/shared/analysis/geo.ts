@@ -1,18 +1,23 @@
-// Karten-Geometrie aus den Demos selbst ableiten: Callout-Mittelpunkte und Zonen (A / Mid / B).
-import type { MatchData, Round } from '../model.ts'
+// Karten-Geometrie aus den Demos selbst ableiten: Callout-Mittelpunkte, Zonen (A / Mid / B), Laufwege und Besitzkarte.
+import type { MatchData, Round, Side } from '../model.ts'
+import { laneOf } from './maps/index.ts'
 
 export type Zone = 'A' | 'B' | 'Mid' | 'T-Spawn' | 'CT-Spawn'
 export interface Geo {
+  map: string
+  /** Laufweg eines Places ("LongDoors" → "A long", P1 laneOf); '' bleibt '' */
+  lane: (place: string) => string
+  /** Besitzkarte: T-Anteil je Place 3–15 s nach Freezetime (≥ 0,75 = T-Hälfte) */
+  tShare: Map<string, number>
+  /** T-Anteil der 250-u-Zelle; undefined bei < 15 Samples */
+  tCell: (x: number, y: number) => number | undefined
+  /** T-Anteil an einer Position: Zelle, sonst Place, sonst 0,5 */
+  tAt: (x: number, y: number, place: string) => number
   place: Map<string, { x: number; y: number; z: number; n: number }>
-  zoneOf: (place: string) => Zone
   zoneAt: (x: number, y: number) => Zone
   /** Direkt auf einer Bombsite (für Hit-Erkennung) */
   siteAt: (x: number, y: number) => 'A' | 'B' | undefined
   siteR: number
-  /** Grobe Richtung (A-Seite / B-Seite / Mitte) */
-  leanAt: (x: number, y: number) => 'A' | 'B' | 'Mid'
-  /** > 0 = Richtung A, < 0 = Richtung B */
-  leanScore: (x: number, y: number) => number
   nearestPlace: (x: number, y: number, z?: number) => string
   siteA: [number, number]; siteB: [number, number]; tSpawn: [number, number]; ctSpawn: [number, number]
 }
@@ -61,22 +66,19 @@ export function buildGeo(matches: MatchData[]): Geo {
     if (dCT < 0.5 * Math.min(dA, dB) && dCT < 700) return 'CT-Spawn'
     return 'Mid'
   }
-  // Weichere Richtung für Laufwege: Long Doors/Catwalk auf Dust2 zählen schon als "A-Seite"
-  // Fortschritt vom T-Spawn zur Site: wer Richtung A läuft, entfernt sich meist von B
-  const tA = d2(tSpawn, siteA), tB = d2(tSpawn, siteB)
-  const leanScore = (x: number, y: number) => (1 - d2([x, y], siteA) / tA) - (1 - d2([x, y], siteB) / tB)
-  const leanAt = (x: number, y: number): 'A' | 'B' | 'Mid' => {
-    const s = leanScore(x, y)
-    return s > 0.12 ? 'A' : s < -0.12 ? 'B' : 'Mid'
+  // Besitzkarte aus den Demos selbst (kartenunabhängig): wer steht 3–15 s nach Freezetime wo, je Place und 250-u-Zelle
+  type Count = Map<string, { T: number; CT: number }>
+  const byPlace: Count = new Map(), byCell: Count = new Map()
+  const cellKey = (x: number, y: number) => `${Math.floor(x / 250)},${Math.floor(y / 250)}`
+  const bump = (c: Count, k: string, side: Side) => { const o = c.get(k) ?? { T: 0, CT: 0 }; o[side]++; c.set(k, o) }
+  for (const m of matches) for (const r of m.rounds) for (let s = 3; s <= 15; s++) {
+    const f = frameAtSec(r, s)
+    for (const t of r.tracks) if (t.hp[f] > 0) { bump(byPlace, r.places[t.place[f]], t.side); bump(byCell, cellKey(t.x[f], t.y[f]), t.side) }
   }
-  const zoneCache = new Map<string, Zone>()
-  const zoneOf = (place: string): Zone => {
-    if (/bombsite\s*a/i.test(place)) return 'A'
-    if (/bombsite\s*b/i.test(place)) return 'B'
-    if (zoneCache.has(place)) return zoneCache.get(place)!
-    const p = acc.get(place); const z = p ? zoneAt(p.x, p.y) : 'Mid'
-    zoneCache.set(place, z); return z
-  }
+  const tShare = new Map([...byPlace].map(([p, o]) => [p, o.T / (o.T + o.CT)]))
+  const tCell = (x: number, y: number) => { const o = byCell.get(cellKey(x, y)); return o && o.T + o.CT >= 15 ? o.T / (o.T + o.CT) : undefined }
+  const tAt = (x: number, y: number, place: string) => tCell(x, y) ?? tShare.get(place) ?? 0.5
+  const map = matches[0]?.map ?? ''
   const list = [...acc.entries()]
   const nearestPlace = (x: number, y: number, z?: number) => {
     let best = '', bd = Infinity
@@ -86,16 +88,7 @@ export function buildGeo(matches: MatchData[]): Geo {
     }
     return best
   }
-  return { place: acc, zoneOf, zoneAt, leanAt, leanScore, siteAt, siteR, nearestPlace, siteA, siteB, tSpawn, ctSpawn }
-}
-
-/** Callout lesbar machen: "TopofMid" → "Top of Mid", "BombsiteA" → "A-Site" */
-export function prettyPlace(p: string): string {
-  if (!p) return '?'
-  const m = /^Bombsite([AB])$/i.exec(p); if (m) return `${m[1].toUpperCase()}-Site`
-  if (p === 'TSpawn') return 'T-Spawn'
-  if (p === 'CTSpawn') return 'CT-Spawn'
-  return p.replace(/of(?=[A-Z])/g, ' of ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim()
+  return { map, lane: p => laneOf(map, p), tShare, tCell, tAt, place: acc, zoneAt, siteAt, siteR, nearestPlace, siteA, siteB, tSpawn, ctSpawn }
 }
 
 /** Frame-Index zu Sekunden nach Freezetime-Ende */
