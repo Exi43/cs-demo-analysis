@@ -34,7 +34,11 @@ function runPrepare3d(file3d: string, onProgress: (p: { pct: number; msg: string
   return new Promise<Assets3D>((res, rej) => {
     const child = utilityProcess.fork(join(__dirname, 'assets3d.js'), [], {
       execArgv: ['--max-old-space-size=4096'], env: { ...process.env, UV_THREADPOOL_SIZE: '2' }, serviceName: 'CS Demo Analysis 3D assets',
+      stdio: ['ignore', 'inherit', 'pipe'],
     })
+    // Absturzgrund (z. B. fehlendes Modul im Installer) in die Fehlermeldung, sonst sieht ein Nutzer nur „code 1“
+    let errTail = ''
+    child.stderr?.on('data', (d: Buffer) => { process.stderr.write(d); errTail = (errTail + d).slice(-2000) })
     running.add(child)
     let done = false, timer: NodeJS.Timeout | undefined
     const finish = (err?: Error, assets?: Assets3D, tree = false) => {
@@ -50,7 +54,10 @@ function runPrepare3d(file3d: string, onProgress: (p: { pct: number; msg: string
       if (msg.type === 'progress') onProgress(msg.p)
       else finish(msg.type === 'done' ? undefined : new Error(msg.message), msg.assets)
     })
-    child.on('exit', code => finish(new Error(`3D asset builder crashed (code ${code}).`)))
+    child.on('exit', code => setTimeout(() => { // stderr kann nach 'exit' noch ankommen
+      const why = /^\w*Error\b.*$/m.exec(errTail)?.[0] ?? errTail.trim().split('\n').pop()
+      finish(new Error(`3D asset builder crashed (code ${code}).${why ? ' ' + why.trim() : ''}`))
+    }, 300))
     child.postMessage({ file3d, root: app.getPath('userData') })
   })
 }

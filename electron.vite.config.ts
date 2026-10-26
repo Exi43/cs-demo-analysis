@@ -4,8 +4,9 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     build: {
+      // three mitbündeln: electron-builder lässt node_modules/*/examples weg (EXRLoader fehlte im Installer, 3D-Bau stürzte ab)
+      externalizeDeps: { exclude: ['three'] },
       rollupOptions: {
         input: {
           index: resolve('src/main/index.ts'),
