@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol, screen, utilityProcess } from 'electron'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { release, totalmem } from 'node:os'
 import { gunzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import type { MatchData, MatchSummary } from '../shared/model.ts'
@@ -16,16 +17,28 @@ if (process.env.CSDA_FPS) { app.commandLine.appendSwitch('disable-frame-rate-lim
 // 3D-Assets per cs3d://assets3d/<patch>/<pfad>; corsEnabled, sonst scheitert fetch/Textur-Laden von der file://-Seite
 protocol.registerSchemesAsPrivileged([{ scheme: 'cs3d', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }])
 
-const dataDir = join(app.getPath('userData'), 'matches')
+const userData = app.getPath('userData')
+const dataDir = join(userData, 'matches')
 const indexFile = join(dataDir, 'index.json')
 const mapsDir = app.isPackaged ? join(process.resourcesPath, 'maps') : join(app.getAppPath(), 'resources', 'maps')
 mkdirSync(dataDir, { recursive: true })
 
+// crash.log: Absturzgründe ohne Konsole nachlesen (installierte App auf fremden PCs); über 1 MB → neu anfangen
+const logFile = join(userData, 'crash.log')
+if (existsSync(logFile) && statSync(logFile).size > 1e6) rmSync(logFile)
+const log = (msg: string) => { try { appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`) } catch {} }
+
 const readIndex = (): MatchSummary[] => (existsSync(indexFile) ? JSON.parse(readFileSync(indexFile, 'utf8')) : [])
 const writeIndex = (list: MatchSummary[]) => writeFileSync(indexFile, JSON.stringify(list))
 const file3d = (id: string) => join(dataDir, `${id}.3d.bin.gz`)
-/** 3D-Assets im Hintergrund vorbereiten (nach Import, beim App-Start, beim Öffnen eines Matches): 3D öffnen braucht danach ~nichts mehr */
-const prepare3dLater = (id: string) => { if (existsSync(file3d(id))) prepareForMatch(id, file3d(id), true).catch(() => {}) } // Fehler zeigt der Status
+/**
+ * 3D-Assets im Hintergrund vorbereiten (nach Import, beim App-Start, beim Öffnen eines Matches): 3D öffnen braucht danach ~nichts mehr.
+ * Nur wenn 3D schon einmal gebaut wurde (Source 2 Viewer da): der erste Bau lädt eine exe herunter, braucht ~20 min und bis 3.5 GB RAM
+ * und startet deshalb erst, wenn jemand das 3D-Replay öffnet (nicht ungefragt beim App-Start auf fremden PCs).
+ */
+const prepare3dLater = (id: string) => {
+  if (existsSync(join(userData, 'tools', 'vrf', 'version.txt')) && existsSync(file3d(id))) prepareForMatch(id, file3d(id), true).catch(() => {}) // Fehler zeigt der Status
+}
 /** beim App-Start so viele der neuesten Demos vorbereiten (bei vorhandenem Cache je < 1 s, niedrige Priorität) */
 const START_PREPARE = 3
 
@@ -105,7 +118,10 @@ ipcMain.handle('match:load3d', (_e, id: string) => {
 })
 ipcMain.handle('assets3d:prepare', (_e, id: string) => prepareForMatch(id, file3d(id)))
 ipcMain.handle('assets3d:statusAll', () => prepareStatus())
-onPrepareStatus(s => { const w = win?.webContents; if (w && !w.isDestroyed?.()) w.send('assets3d:status', s) })
+onPrepareStatus(s => {
+  if (s.state === 'error') log(`3D ${s.id}: ${s.msg}`)
+  const w = win?.webContents; if (w && !w.isDestroyed?.()) w.send('assets3d:status', s)
+})
 ipcMain.handle('cs2:status', () => {
   try { const c = findCS2(); return { csgo: c.csgo, patch: c.patch } } catch (err: any) { return { error: String(err?.message ?? err) } }
 })
@@ -125,8 +141,29 @@ function openFromArgs(argv: string[]) {
   }
 }
 
+// Grafik-Notbetrieb: stürzt der GPU-Prozess beim Start immer wieder ab (Treiber, Virenscanner), beendet Chromium die ganze App ohne
+// Meldung. Endete der letzte Lauf so (Merker 'running' blieb liegen und enthält 'gpu' = GPU-Absturz in den ersten 30 s), läuft diese
+// Version ab jetzt ohne Grafikbeschleunigung und ohne eigenen GPU-Prozess; 2D geht, das 3D-Replay nicht. Neue Version → neuer Versuch.
+function guardStart() {
+  const runFile = join(userData, 'running'), safeFile = join(userData, 'gpu-safe-mode')
+  if (existsSync(runFile) && readFileSync(runFile, 'utf8').includes('gpu')) writeFileSync(safeFile, app.getVersion())
+  const gpuSafe = existsSync(safeFile) && readFileSync(safeFile, 'utf8') === app.getVersion()
+  if (gpuSafe) { app.disableHardwareAcceleration(); app.commandLine.appendSwitch('in-process-gpu') }
+  writeFileSync(runFile, '')
+  log(`start ${app.getVersion()}, Windows ${release()}, ${Math.round(totalmem() / 2 ** 30)} GB RAM${gpuSafe ? ', GPU safe mode' : ''}`)
+  let quitting = false
+  app.on('before-quit', () => { quitting = true })
+  app.on('child-process-gone', (_e, d) => {
+    log(`${d.type} process gone: ${d.reason}, code ${d.exitCode}${d.serviceName ? `, ${d.serviceName}` : ''}`)
+    if (d.type === 'GPU' && d.reason !== 'clean-exit' && !quitting && process.uptime() < 30) try { appendFileSync(runFile, 'gpu') } catch {}
+  })
+  app.on('render-process-gone', (_e, _wc, d) => log(`window process gone: ${d.reason}, code ${d.exitCode}`))
+  app.on('will-quit', () => { rmSync(runFile, { force: true }); log('quit') })
+}
+
 // Nur eine Instanz: ein zweiter Start (z. B. Doppelklick auf Demo) geht an das offene Fenster
 if (!process.env.CSDA_SHOT && !app.requestSingleInstanceLock()) app.quit()
+else if (!process.env.CSDA_SHOT) guardStart()
 app.on('second-instance', (_e, argv) => {
   if (!win) return
   if (win.isMinimized()) win.restore()
