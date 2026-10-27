@@ -119,7 +119,7 @@ ipcMain.handle('match:load3d', (_e, id: string) => {
 ipcMain.handle('assets3d:prepare', (_e, id: string) => prepareForMatch(id, file3d(id)))
 ipcMain.handle('assets3d:statusAll', () => prepareStatus())
 onPrepareStatus(s => {
-  if (s.state === 'error') log(`3D ${s.id}: ${s.msg}`)
+  if (s.state === 'error' || s.msg === 'Starting') log(`3D ${s.id}: ${s.msg}`) // 'Starting' vor dem Prozessstart: stirbt die App dabei, steht es hier
   const w = win?.webContents; if (w && !w.isDestroyed?.()) w.send('assets3d:status', s)
 })
 ipcMain.handle('cs2:status', () => {
