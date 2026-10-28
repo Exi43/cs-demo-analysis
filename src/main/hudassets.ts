@@ -5,8 +5,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync 
 import { join } from 'node:path'
 import { assetUrl } from '../shared/assets3d.ts'
 import type { HudAssetManifest } from '../shared/hud.ts'
-import { ensureVrf, findCS2, vrf, writeAtomic } from './assets3d/cs2.ts'
-import { serial } from './assets3d/index.ts'
+import { findCS2, vrf, writeAtomic } from './assets3d/cs2.ts'
+import { serial, vrfReady } from './assets3d/index.ts'
 
 const IMG = 'panorama/images/'
 const UI = ['kill', 'crosshair_circle', 'bomb_c4', 'bomb_icon', 'defuser', 'defuser_white', 'clock', 'settings', 'camera', 'play', 'pause', 'skip',
@@ -23,7 +23,7 @@ async function build(root: string): Promise<HudAssetManifest> {
   const cs2 = findCS2(), base = join(root, 'assets3d', 'hud'), out = join(base, cs2.patch), mf = join(out, 'manifest.json')
   if (!existsSync(mf)) await serial(async () => {
     if (existsSync(mf)) return // anderer Aufruf war in der Queue schneller
-    const exe = await ensureVrf(join(root, 'tools', 'vrf'), () => {})
+    const exe = await vrfReady() // derselbe Download wie der Asset-Bau (nie zwei gleichzeitig)
     rmSync(out, { recursive: true, force: true }) // Rest eines abgebrochenen Baus (manifest.json kommt zuletzt)
     const fonts = join(out, 'fonts'), log = join(out, 'vrf.log')
     mkdirSync(fonts, { recursive: true })

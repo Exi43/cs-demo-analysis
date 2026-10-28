@@ -8,11 +8,21 @@ import { constants, setPriority } from 'node:os'
 const GAME = /\\steamapps\\common\\|\\Riot Games\\|\\Epic Games\\|\\cs2\.exe$/i
 /** Werkzeuge in diesen Ordnern, die oft dauernd laufen. shortcut: feste Liste; blockiert ein weiteres Werkzeug den Hintergrund, hier ergänzen */
 const TOOL = /\\steamapps\\common\\(wallpaper_engine|rainmeter|Lossless Scaling|Steamworks Shared|Steam Controller Configs)\\|\\Riot Games\\Riot Client\\|\\Epic Games\\(Launcher|Epic Online Services)\\/i
-export const isGame = (exe: string) => GAME.test(exe) && !TOOL.test(exe)
+/**
+ * Spiele außerhalb dieser Ordner bzw. mit verborgenem Pfad (Anti-Cheat wie BattlEye: WMI liefert dann kein ExecutablePath) per Prozessname.
+ * shortcut: feste Liste; läuft ein weiteres Spiel ohne Pause der Hintergrundarbeit, hier ergänzen
+ */
+const NAMES = ['cs2.exe', 'EscapeFromTarkov.exe', 'RobloxPlayerBeta.exe', 'VALORANT-Win64-Shipping.exe', 'League of Legends.exe',
+  'FortniteClient-Win64-Shipping.exe', 'r5apex.exe', 'r5apex_dx12.exe', 'GTA5.exe', 'GTA5_Enhanced.exe', 'FiveM.exe', 'Overwatch.exe',
+  'RainbowSix.exe', 'RainbowSix_BE.exe', 'cod.exe', 'RustClient.exe', 'TslGame.exe', 'Minecraft.Windows.exe']
+const byName = new Set(NAMES.map(n => n.toLowerCase()))
+export const isGame = (exe: string) => (GAME.test(exe) && !TOOL.test(exe)) || byName.has(exe.split('\\').pop()!.toLowerCase())
 
-const WQL = ['%\\\\steamapps\\\\common\\\\%', '%\\\\Riot Games\\\\%', '%\\\\Epic Games\\\\%'].map(p => `ExecutablePath like '${p}'`).join(' or ') + ` or Name = 'cs2.exe'`
-// Klartext statt -EncodedCommand: den prüft der Virenscanner beim Start ~1,4 s, so lange stand der Main-Prozess (Fenster hing) still
-const PS = `Get-CimInstance Win32_Process -Property ExecutablePath -Filter "${WQL}" | ForEach-Object ExecutablePath`
+const WQL = ['%\\\\steamapps\\\\common\\\\%', '%\\\\Riot Games\\\\%', '%\\\\Epic Games\\\\%'].map(p => `ExecutablePath like '${p}'`).join(' or ')
+  + NAMES.map(n => ` or Name = '${n}'`).join('')
+// Klartext statt -EncodedCommand: den prüft der Virenscanner beim Start ~1,4 s, so lange stand der Main-Prozess (Fenster hing) still.
+// Ohne Pfad (Anti-Cheat) den Namen ausgeben
+const PS = `Get-CimInstance Win32_Process -Property ExecutablePath,Name -Filter "${WQL}" | ForEach-Object { if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.Name } }`
 const POLL = 30e3
 
 let last = -Infinity, cur: Promise<boolean> = Promise.resolve(false)

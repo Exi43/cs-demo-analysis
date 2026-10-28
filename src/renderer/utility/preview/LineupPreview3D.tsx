@@ -1,14 +1,16 @@
 // Utility-Seite: 3D-Vorschau eines Lineups wie ein kurzes Video mit Tasten-Anzeige (Vertrag shared/utility.ts; keine Videodateien).
 // a) Lineup aus einer Demo (lineup.demo, Match noch in der Bibliothek): die echte Stelle im 3D-Replay in Ego-Sicht des Werfers ab 3 s vor dem Wurf.
-// b) sonst oder Wurf nicht gefunden: nur die Map (api.prepareMap, beim ersten Mal Minuten) und ein Mini-Demo aus dem Lineup (synth.ts):
-//    Augenhöhe auf dem Stand, Blick nach aim bzw. aufs Ziel, Tasten der Technik, angenäherte Flugbahn + Ziel (Engine.setMarks).
+// b) sonst oder Wurf nicht gefunden: Map + Vorschau-Kit (api.prepareMap; die App baut alle Pool-Maps nach dem Start im Hintergrund vor)
+//    und ein Mini-Demo aus dem Lineup (synth.ts): Augenhöhe auf dem Stand, Blick nach aim bzw. aufs Ziel, Tasten der Technik, Hände mit
+//    Granate (ziehen, Pin, Wurf), echtes Granatenmodell auf der angenäherten Flugbahn, Ziel + Flugbahn (Engine.setMarks, camera.ts marksAt).
 // Kamera (camera.ts): vor dem Wurf Ego mit Zoom (1×/2×/4×, Mausrad, Z); mit „Follow grenade“ folgt sie danach der Granate (Pose wie die
 // Granaten-Kamera), ab der Wirkung OUT_S Außenansicht über die ganze Flugbahn mit Linie, dann zurück zum Start (Wiederholen = Play).
 // Fadenkreuz einstellbar (settings.ts, pro PC): eigenes, das des Werfers aus der Demo oder ein CS2-Code, gemalt mit dem CS2-Zeichner.
 // Engine wie das 3D-Replay, ohne Audio; Schilder, X-Ray, Impacts und Granaten-Kamera-Bild aus, solange offen (tempOptions). Bildtakt
 // frameloop.ts: zeichnet nur beim Abspielen und bei Bedarf. Schließen (×, Esc, Klick daneben) gibt den GPU-Speicher frei (engine.dispose).
 // Selbsttest: App.tsx #lineup=<JSON>[&at=<s>][&zoom=<k>][&set=<Einstellungen-JSON>][&panel]: at = Sekunden relativ zum Wurf (dort
-// angehalten), set gilt nur für diese Sitzung (wird nicht gespeichert), panel öffnet die Fadenkreuz-Einstellungen; [data-h3-stats] = Ladezeiten.
+// angehalten), set gilt nur für diese Sitzung (wird nicht gespeichert), panel öffnet die Fadenkreuz-Einstellungen; [data-h3-stats] = Ladezeiten,
+// data-lp-clip = 'from throwTick det to tickrate', data-lp-tick = aktueller Tick (höchstens 15×/s).
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { parseFloorGrid, type Assets3D, type MapAssetManifest, type SoundMap } from '../../../shared/assets3d'
 import { decode3d, newSample, roundAt, sampleTrack, type CS3D } from '../../../shared/cs3d'
@@ -23,7 +25,7 @@ import { Crosshair } from '../../replay3d/Hud'
 import { HudIcon } from '../../replay3d/hud/assets'
 import { InputsOverlay, keysAt } from '../../replay3d/InputsOverlay'
 import { tempOptions } from '../../replay3d/options'
-import { FOLLOW_BLEND, OUT_BLEND, OUT_S, ZOOMS, orbitView, phaseAt, zoomAt } from './camera'
+import { FOLLOW_AFTER, FOLLOW_BLEND, OUT_BLEND, OUT_S, ZOOMS, marksAt, orbitView, phaseAt, zoomAt } from './camera'
 import { loadSettings, mergeSettings, saveSettings, xhairRender, type PreviewSettings, type XhairSettings } from './settings'
 import { synthLineup } from './synth'
 import { XhairPanel } from './XhairPanel'
@@ -38,7 +40,7 @@ const techText = (t: string) => BUILTIN_TECHNIQUES.find(x => x.id === t)?.label 
 /** solange die Vorschau offen ist: schlankes Bild ohne Überkopf-Schilder, X-Ray, Impacts und Granaten-Kamera-Bild */
 const PREVIEW_OPTIONS = { xray: false, impacts: false, nadeCam: false, hideAll: false, ui: { labels: false, crosshair: true } }
 
-/** Engine-Assets nur mit Map (Variante b): ohne Agenten, Waffen; Sounds nutzt nur das Audio, das die Vorschau nicht startet */
+/** Engine-Assets der Variante b: Map + Kit (fehlt es nach einem Kit-Fehler: ohne Agenten, Waffen); Sounds nutzt nur das Audio, das die Vorschau nicht startet */
 const mapOnly = (map: MapAssetManifest): Assets3D =>
   ({ map, agents: { clips: '', clipMeta: {}, models: {}, arms: {} }, weapons: {}, sounds: { base: '', map: { mixgroupVol: {}, surfToStep: {}, map: {} as SoundMap['map'] } } })
 
@@ -83,12 +85,12 @@ async function fromDemo(demo: NonNullable<Lineup['demo']>): Promise<Source | nul
   }
 }
 
-/** Variante b: nur Map + Mini-Demo; Höhen ohne z aus dem Boden-Raster */
+/** Variante b: Map + Kit + Mini-Demo; Höhen ohne z aus dem Boden-Raster */
 async function fromMap(l: Lineup): Promise<Source> {
-  const map = await api.prepareMap(l.map), res = await fetch(map.floor)
+  const a = await api.prepareMap(l.map), res = await fetch(a.map.floor)
   if (!res.ok) throw new Error(`Could not load the floor grid of ${l.map} (${res.status})`)
   const s = synthLineup(l, parseFloorGrid(await res.arrayBuffer()))
-  return { ...s, assets: mapOnly(map), nade: 0, approx: true }
+  return { ...s, assets: { ...mapOnly(a.map), ...a.agents && { agents: a.agents }, ...a.weapons && { weapons: a.weapons } }, nade: 0, approx: true }
 }
 
 /** Selbsttest-Parameter hinter dem Lineup im Hash (#lineup=…&at=…&zoom=…&set=…&panel) */
@@ -109,8 +111,8 @@ export function LineupPreview3D(p: { lineup: Lineup; onClose: () => void }): JSX
   const update = (u: { xhair?: Partial<XhairSettings>; follow?: boolean }) =>
     setSet(cur => { const n = { xhair: { ...cur.xhair, ...u.xhair }, follow: u.follow ?? cur.follow }; saveSettings(n); return n })
   const stageRef = useRef<HTMLDivElement>(null), canvasRef = useRef<HTMLCanvasElement>(null)
-  const S = useRef<{ tick: number; playing: boolean; speed: number; zoom: number; follow: boolean; phase: number; loop?: FrameLoop }>(
-    { tick: 0, playing: false, speed: 1, zoom, follow: set.follow, phase: -1 })
+  const S = useRef<{ tick: number; playing: boolean; speed: number; zoom: number; follow: boolean; phase: number; marks: number; loop?: FrameLoop }>(
+    { tick: 0, playing: false, speed: 1, zoom, follow: set.follow, phase: -1, marks: -1 })
   const close = useRef(p.onClose); close.current = p.onClose
   const xr = useMemo(() => xhairRender(set.xhair, clip?.thrower), [set.xhair, clip])
 
@@ -133,11 +135,15 @@ export function LineupPreview3D(p: { lineup: Lineup; onClose: () => void }): JSX
       if (dead) return
       lap('code')
       let last = ''
-      const e = await createEngine(canvasRef.current!, src.assets, src.data, pr => { if (pr.msg !== last) lap((last = pr.msg)); if (!dead) setStatus({ msg: pr.msg, pct: pr.pct }) })
+      // ohne Demo braucht vor dem Wurf nichts den Raycast: erstes Bild ohne auf das Kollisionsgitter zu warten
+      const e = await createEngine(canvasRef.current!, src.assets, src.data, pr => { if (pr.msg !== last) lap((last = pr.msg)); if (!dead) setStatus({ msg: pr.msg, pct: pr.pct }) }, { lazyRay: src.approx })
       if (dead) return e.dispose()
       engine = e
       e.setCamera('ego', src.steamid)
       lap('engine')
+      await e.warm?.(src.throwTick - src.data.d.header.tickrate) // Hände mit Granate: geladen und übersetzt, bevor es losgeht
+      if (dead) return
+      lap('hands')
       setStats(`lineup preview ${src.approx ? 'map only' : 'demo'} · open ${ms.join(' ')} s · loaded in ${e.stats().loadMs} ms`)
       setClip({ ...src, engine: e, d: src.data.d }); setStatus(null)
     })().catch(err => {
@@ -153,16 +159,17 @@ export function LineupPreview3D(p: { lineup: Lineup; onClose: () => void }): JSX
     if (!clip) return
     const s = S.current, e = clip.engine, rate = clip.d.header.tickrate, at = hashArgs().get('at') // Selbsttest
     s.tick = at ? clip.throwTick + Number(at) * rate : clip.from
-    s.playing = !at; s.phase = -1
+    s.playing = !at; s.phase = -1; s.marks = -1
+    const followAt = clip.throwTick + FOLLOW_AFTER * rate
     const direct = (t: number) => {
-      const ph = phaseAt(t, clip.throwTick, clip.det, s.follow)
+      const ph = phaseAt(t, followAt, clip.det, s.follow), mk = marksAt(ph, t, clip.throwTick, clip.approx, s.follow)
       if (ph !== s.phase) {
         s.phase = ph; setPhase(ph)
-        if (ph === 1) e.setView?.({ nade: clip.nade }, FOLLOW_BLEND, clip.throwTick)
+        if (ph === 1) e.setView?.({ nade: clip.nade }, FOLLOW_BLEND, followAt)
         else if (ph === 2) e.setView?.(orbitView(clip.marks.target, clip.marks.path[0], clip.det), OUT_BLEND, clip.det)
         else e.setView?.(null)
-        e.setMarks?.(ph === 2 || (ph === 0 && clip.approx) ? clip.marks : null) // beim Folgen läge die Linie direkt vor der Kamera
       }
+      if (mk !== s.marks) { s.marks = mk; e.setMarks?.(mk === 2 ? clip.marks : mk ? { path: [], target: clip.marks.target } : null) }
       e.setZoom?.(ph === 0 ? zoomAt(t, clip.throwTick, s.zoom, rate) : 1)
     }
     const loop = createFrameLoop({
@@ -208,7 +215,7 @@ export function LineupPreview3D(p: { lineup: Lineup; onClose: () => void }): JSX
   const replay = () => { if (clip) { S.current.tick = clip.from; S.current.loop?.jump(); play(true) } }
   const pickSpeed = (v: number) => { S.current.speed = v; setSpeed(v) }
   const frac = (t: number) => (clip ? Math.min(1, Math.max(0, (t - clip.from) / (clip.to - clip.from))) : 0)
-  const showMarks = clip && (phase === 2 || (phase === 0 && clip.approx))
+  const mk = clip ? marksAt(phase, tick, clip.throwTick, clip.approx, set.follow) : 0
 
   return (
     <div className="lp-back" onMouseDown={e => { if (e.target === e.currentTarget) p.onClose() }}>
@@ -234,9 +241,9 @@ export function LineupPreview3D(p: { lineup: Lineup; onClose: () => void }): JSX
               <HudIcon name={ICON[l.type]} img /><span>{tick < clip.throwTick ? l.type : tick < clip.det ? 'Thrown' : 'Landed'}</span>
               {phase === 0 && zoom > 1 && tick < clip.throwTick && <em>{zoom}× zoom</em>}
             </div>
-            {showMarks && <div className="lp-legend"><span><i className="path" />{clip.approx ? 'Trajectory (approx.)' : 'Trajectory'}</span><span><i className="ring" />Target</span></div>}
+            {mk > 0 && <div className="lp-legend">{mk === 2 && <span><i className="path" />{clip.approx ? 'Trajectory (approx.)' : 'Trajectory'}</span>}<span><i className="ring" />Target</span></div>}
           </>}
-          {stats && <span hidden data-h3-stats={stats} />}
+          {stats && clip && <span hidden data-h3-stats={stats} data-lp-clip={`${clip.from} ${clip.throwTick} ${clip.det} ${clip.to} ${clip.d.header.tickrate}`} data-lp-tick={Math.round(tick)} />}
           {status && (
             <div className="h3-load">
               <div className="h3-load-box">
@@ -244,7 +251,7 @@ export function LineupPreview3D(p: { lineup: Lineup; onClose: () => void }): JSX
                 {'msg' in status && <>
                   <div className="bar"><div style={{ width: `${status.pct}%` }} /></div>
                   <div>{status.msg}</div>
-                  <div className="small muted">The first time, the 3D files are built from your Counter-Strike 2 installation (a few minutes; without a demo only the map). Then they are cached.</div>
+                  <div className="small muted">The first time, the 3D files are built from your Counter-Strike 2 installation (a few minutes). Then they are cached; after the app starts it prepares all pool maps in the background.</div>
                 </>}
                 {'error' in status && <div className="error">{status.error}</div>}
               </div>

@@ -55,6 +55,7 @@ const P: Record<string, string> = {
   zone: 'M5 6l12-2 3 10-9 6-7-5z',
   text: 'M5 7V4h14v3M12 4v16M9 20h6',
   erase: 'M16 3l5 5-11 11H5l-2-2 9-9M8 11l5 5M11 19h10',
+  cursor: 'M5 3v16l4.5-4.5 3 6.5 2.5-1-3-6.5H18z',
   book: 'M4 19V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0 0 4h14',
   note: 'M5 3h10l4 4v14H5zM15 3v4h4M8 12h8M8 16h6',
   users: 'M9 11a4 4 0 1 0 0-8a4 4 0 1 0 0 8M2 21v-1a6 6 0 0 1 12 0v1M16 3.5a4 4 0 0 1 0 7.5M22 21v-1a6 6 0 0 0-4-5.6',

@@ -390,6 +390,8 @@ export interface EconAssets {
 
 /** gloves: Handschuh-def (5027–5035) → GLB; skins fehlt/leer → Vanilla (alter Bau, Fehler beim Skin-Export); econ fehlt → ohne Aufkleber/Anhänger */
 export interface Assets3D { map: MapAssetManifest; agents: AgentAssets; weapons: WeaponAssets; sounds: SoundAssets; gloves?: Record<number, string>; skins?: SkinAssets; econ?: EconAssets }
+/** Utility-Vorschau ohne Demo (IPC assets3d:prepareMap): Map + Vorschau-Kit (Standard-Agenten T/CT mit Ego-Armen, Granaten 43–48); Kit fehlt nach einem Kit-Fehler */
+export type PreviewAssets = Pick<Assets3D, 'map'> & Partial<Pick<Assets3D, 'agents' | 'weapons'>>
 
 /** Was prepare3d aus dem CS3D-Header braucht: Agenten, Waffen (+ Messer pro Seite), Lackierungen von Waffen und Handschuhen, Aufkleber/Anhänger */
 export function prepareInput(h: CS3DHeader) {

@@ -9,6 +9,9 @@ describe('isGame', () => {
       'C:\\Riot Games\\VALORANT\\live\\VALORANT.exe',
       'C:\\Program Files\\Epic Games\\Fortnite\\FortniteGame\\Binaries\\Win64\\FortniteClient-Win64-Shipping.exe',
       'E:\\Games\\cs2.exe',
+      'F:\\EFT\\EFT\\EscapeFromTarkov.exe',
+      'EscapeFromTarkov.exe', // Pfad von BattlEye verborgen: nur der Name
+      'RobloxPlayerBeta.exe',
     ]) expect(isGame(p), p).toBe(true)
   })
   it('tools in those folders, launchers and other programs do not', () => {

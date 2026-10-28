@@ -263,7 +263,22 @@
 .ut-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 22px; align-items: start; }
 .ut-media { position: relative; aspect-ratio: 16 / 9; background: #0a0a0b; border-radius: 13px; overflow: hidden; border: 1px solid var(--u-line); }
 .ut-media > img, .ut-media > .ut-mini { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-.ut-media-note { position: absolute; bottom: 12px; left: 12px; background: rgba(0, 0, 0, .75); padding: 7px 12px; border-radius: 9px; font-size: 13px; }
+.ut-media-note { position: absolute; bottom: 12px; left: 12px; background: rgba(0, 0, 0, .75); padding: 7px 12px; border-radius: 9px; font-size: 13px; display: flex; align-items: center; gap: 12px; }
+/* Bilder aus der 3D-Map (capture/GenerateImages.tsx): Knopf im Hinweis, klein oben rechts auf dem Bild (bei Hover), Kachel im Editor */
+.ut-gen { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 8px; font-weight: 700; font-size: 13px; white-space: nowrap; transition: background .12s, opacity .15s; }
+.ut-gen.button { background: var(--u-accent); color: var(--u-ink); border: none; padding: 7px 13px; }
+.ut-gen.button:hover:not(:disabled) { background: #ffc54f; }
+.ut-gen.corner { position: absolute; top: 10px; right: 10px; background: rgba(12, 12, 14, .82); color: #fff; border: 1px solid rgba(255, 255, 255, .14); padding: 6px 11px; font-size: 12px; opacity: 0; }
+.ut-media:hover .ut-gen.corner, .ut-gen.corner:focus-visible, .ut-gen.corner.busy { opacity: 1; }
+.ut-gen.corner:hover:not(:disabled) { background: var(--u-accent); color: var(--u-ink); }
+.ut-gen.tile { width: 168px; aspect-ratio: 16 / 9; flex-direction: column; gap: 6px; padding: 8px; background: #2a2210; border: 1px solid #5a4415; color: var(--u-accent); font-size: 12px; }
+.ut-gen.tile:hover:not(:disabled) { border-color: var(--u-accent); background: #33290f; }
+.ut .ut-gen.busy { cursor: progress; opacity: 1; } /* läuft: nicht wie ein gesperrter Knopf (styles.css button:disabled) */
+.ut-gen.button .ut-gen-bar { background: rgba(0, 0, 0, .18); }
+.ut-gen small { font-weight: 600; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.ut-gen-bar { width: 84px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .16); overflow: hidden; flex: none; }
+.ut-gen-bar i { display: block; height: 100%; background: currentColor; border-radius: 3px; transition: width .25s; }
+.ut-gen.corner.busy .ut-gen-bar i { background: var(--u-accent); }
 .ut-thumbs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .ut-thumbs button { padding: 0; width: 128px; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; border: 2px solid transparent; background: #000; opacity: .7; }
 .ut-thumbs button.on, .ut-thumbs button:hover { border-color: var(--u-accent); opacity: 1; background: #000; }

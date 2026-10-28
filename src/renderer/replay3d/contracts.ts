@@ -75,7 +75,10 @@ export interface OverlayState { labels: Record<string, LabelInfo>; icons?: Map<s
 export interface LineupMarks { path: [number, number, number][]; target: [number, number, number] }
 /** Utility-Vorschau: Kamera hinter Granate nade (Index in d.nade) bzw. fest auf pos mit Blick auf look (Source-Units) */
 export type LineupView = { nade: number } | { pos: [number, number, number]; look: [number, number, number] }
-  /** Kreisfahrt um center (Abstand dist, elev Grad über der Waagerechten, ab Winkel yaw0 Grad, eine Runde in turnS Sekunden Demo-Zeit ab Tick t0) */
+  /**
+   * Kreisfahrt um center (Abstand dist, mind. elev Grad über der Waagerechten, ab Winkel yaw0 Grad, eine Runde in turnS Sekunden Demo-Zeit ab
+   * Tick t0); ist der Kreis verbaut (Dach, Wände), schwenkt die Kamera stattdessen in der freiesten Richtung hin und her
+   */
   | { orbit: { center: [number, number, number]; dist: number; elev: number; yaw0: number; turnS: number; t0: number } }
 
 export interface Engine {
@@ -95,6 +98,11 @@ export interface Engine {
    */
   setView?(v: LineupView | null, blendS?: number, t0?: number): void
   /**
+   * Was bei tick nachgeladen wird (Viewmodel des Fokus-Spielers, Welt-Clips), jetzt laden und übersetzen; zeichnet dabei. Utility-Vorschau:
+   * Hände ab dem ersten Bild, ohne Ruckler beim ersten Zeigen.
+   */
+  warm?(tick: number): Promise<void>
+  /**
    * true = das nächste Bild muss gezeichnet werden, auch in der Pause: Free-Cam-Taste oder Maus aktiv, Asset nachgeladen
    * (Viewmodel, Welt-Clip, Textur), nach setOverlay oder Optionswechsel. Der Bildtakt fragt das je rAF ab, solange er wach ist (billig halten).
    */
@@ -104,6 +112,8 @@ export interface Engine {
   /** CSS-Pixel; Pixel-Ratio höchstens 1 (Critic P1-5) */
   resize(width: number, height: number): void
   listener(): Listener
+  /** Utility-Bilder (utility/capture): freier Weg von a nach b (Source-Units) bis zur Map; Infinity = bis b frei */
+  raycast?(a: [number, number, number], b: [number, number, number]): number
   stats(): EngineStats
   dispose(): void
 }
@@ -111,7 +121,12 @@ export interface Engine {
  * Regeln: Agent pro Spieler = assets.agents.models[player.agent[side]] ?? AGENT_DEFAULT; Waffe nach WeaponAsset.root an Bone 'wpn';
  * Agenten-Licht aus probes.bin (Critic P0-2); Lichtanzahl nach dem ersten Bild NIE ändern (Shader-Neukompilierung 243–705 ms).
  */
-export type CreateEngine = (canvas: HTMLCanvasElement, assets: Assets3D, data: Replay3DData, onProgress?: (p: PrepareProgress) => void) => Promise<Engine>
+export type CreateEngine = (canvas: HTMLCanvasElement, assets: Assets3D, data: Replay3DData, onProgress?: (p: PrepareProgress) => void, opts?: EngineOpts) => Promise<Engine>
+/**
+ * lazyRay: erstes Bild ohne auf das Kollisionsgitter der Map zu warten (Dust2/Ancient 0,5–1,2 s); bis es da ist, füllen die Effekte keinen
+ * Rauch/kein Feuer (rayReady). Nur, wenn am Anfang nichts den Raycast braucht (Lineup-Vorschau ohne Demo: erst Sekunden später ein Wurf).
+ */
+export interface EngineOpts { lazyRay?: boolean }
 
 /** Von der Engine an die Effekte; gültig ab dem ersten setTime, Agenten sind beim effects.update schon aktualisiert. */
 export interface EffectsContext {
@@ -125,6 +140,8 @@ export interface EffectsContext {
   muzzle(p: number, out: Vector3): boolean
   /** Abstand (m) entlang dir (three-Welt, normiert) bis zur Map, Infinity = kein Treffer bis far. Für Tracer-Enden, Smoke-Füllung, Impacts. */
   raycast(origin: Vector3, dir: Vector3, far: number): number
+  /** false = Kollisionsgitter lädt noch (EngineOpts.lazyRay), raycast trifft nichts: nichts Gemerktes daraus rechnen. Fehlt → immer bereit */
+  rayReady?(): boolean
   /**
    * Flash-Nachbild: Kopie des zuletzt gezeigten Bildes NACH Tonemapping (sRGB, Größe der Zeichenfläche). Die Engine kopiert nur auf
    * Anfrage nach dem Endpass, der Inhalt ist also ab dem nächsten Bild gültig; null = (noch) keine Kopie. Fehlt → kein Nachbild.

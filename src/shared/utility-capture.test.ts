@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import { BTN, FLAG, NADE, decode3d, encode3d, type Track3DIn } from './cs3d'
 import type { ThrowCandidate } from './utility'
-import { clickOf, countSimilar, lineupFromThrow, techniqueAt, techniqueStep, THROW_INHERIT, THROW_SPEED } from './utility-capture'
+import { clickOf, countSimilar, lineupFromThrow, techniqueAt, THROW_INHERIT, THROW_SPEED } from './utility-capture'
 
 const FIRST = 1000, N = 48, THROW_F = 32 // Wurf bei Frame 32 (2 s)
 type Frame = { x: number; y: number; z: number; duck: number; btn: number; flags: number }
@@ -34,7 +34,7 @@ describe('techniqueAt / lineupFromThrow', () => {
     const c = lineupFromThrow(demo(() => ({ btn: 1 << BTN.ATTACK }), full), 0, 'm', 'T', 'TSpawn')!
     expect(c).toMatchObject({ matchId: 'm', tick: throwTick, steamid: 's1', player: 'Exi', round: 7, map: 'de_test', type: 'smoke', side: 'T', similar: 0 })
     expect(c.lineup).toMatchObject({
-      map: 'de_test', type: 'smoke', side: 'T', title: 'Smoke from TSpawn', technique: ['stand', 'left'], steps: ['Throw with left click'],
+      map: 'de_test', type: 'smoke', side: 'T', title: 'Smoke from TSpawn', technique: ['stand', 'left'], steps: [],
       stand: { x: 100, y: 200, z: 0 }, target: { x: 900, y: 250, z: 16 }, aim: { pitch: -20, yaw: -170 }, images: [], tags: [],
       demo: { matchId: 'm', tick: throwTick, steamid: 's1', player: 'Exi', round: 7 },
     })
@@ -52,7 +52,7 @@ describe('techniqueAt / lineupFromThrow', () => {
     const c = lineupFromThrow(demo(i => ({ z: z(i), flags: FLAG.alive | (i >= 30 ? FLAG.airborne : 0), btn: i >= 29 && i <= 31 ? 1 << BTN.JUMP : 0 }), full), 0, 'm', 'T')!
     expect(c.lineup.technique).toEqual(['jump', 'left'])
     expect(c.lineup.stand.z).toBe(0)
-    expect(c.lineup.steps).toEqual(['Jump and throw with left click'])
+    expect(c.lineup.steps).toEqual([]) // Technik steht als Chip
     // Sprungtaste im Wurf-Frame, abgehoben erst 2 Frames später (Jumpthrow am Boden ausgelöst)
     const d = demo(i => ({ flags: FLAG.alive | (i >= THROW_F + 2 ? FLAG.airborne : 0), btn: i === THROW_F ? 1 << BTN.JUMP : 0 }), full)
     expect(techniqueAt(d, 0, 0, throwTick)).toEqual(['jump'])
@@ -72,11 +72,6 @@ describe('techniqueAt / lineupFromThrow', () => {
     expect(lineupFromThrow(d, 0, 'm', 'T')).toBeNull()
   })
 
-  it('Anleitung: Reihenfolge Gehen/Laufen, Ducken, Sprung, dann Taste', () => {
-    expect(techniqueStep(['run', 'jump', 'left'])).toBe('Run, jump and throw with left click')
-    expect(techniqueStep(['crouch', 'both'])).toBe('Crouch and throw with left + right click')
-    expect(techniqueStep(['stand'])).toBe('Throw')
-  })
 })
 
 describe('countSimilar', () => {

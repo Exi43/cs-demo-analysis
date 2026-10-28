@@ -1,10 +1,11 @@
 // Mini-Demo der Utility-Vorschau (synth.ts): Boden-Höhe aus dem Raster, angenäherte Flugbahn, Rundweg Lineup → CS3D → lineupFromThrow
 // (Technik aus Tempo/Luft/Ducken, Stand, Blick, Ziel kommen unverändert zurück) und die Tasten der Technik.
 import { describe, expect, it } from 'vitest'
-import type { FloorGrid } from '../../../shared/assets3d'
-import { BTN, isDown } from '../../../shared/cs3d'
+import type { FloorGrid, WeaponAssets } from '../../../shared/assets3d'
+import { AGENT_DEFAULT, BTN, EV, isDown } from '../../../shared/cs3d'
 import type { Lineup } from '../../../shared/utility'
 import { lineupFromThrow } from '../../../shared/utility-capture'
+import { actionsOf } from '../../replay3d/actions'
 import { approxPath, groundZ, lookAt, NADE_G, synthLineup } from './synth'
 
 /** Raster 3×1 Zellen à 32 u ab (0, 0) mit Lagen je Zelle */
@@ -35,6 +36,15 @@ describe('approxPath', () => {
     const top = (q: typeof p) => Math.max(...q.map(x => x[3]))
     expect(top(p)).toBeGreaterThan(64)
     expect(top(approxPath(from, to, 500, { pitch: -45 }, 1))).toBeGreaterThan(top(p))
+  })
+  it('Ziel weit vor der ballistischen Landung (Abprall): ballistisch bis zur Zielentfernung, dann senkrecht aufs Ziel', () => {
+    const to = { x: 300, y: 0, z: 10 }, p = approxPath(from, to, 0, { pitch: -20 }, 1), last = p[p.length - 1]
+    expect(last.slice(1)).toEqual([300, 0, 10])
+    expect(p.slice(1).every((q, i) => q[0] - p[i][0] === 2)).toBe(true)
+    const v = 675, el = (20 + 70 / 9) * Math.PI / 180, mid = p.find(q => q[1] >= 150)!, t = mid[1] / (v * Math.cos(el))
+    expect(mid[3]).toBeCloseTo(64 + v * Math.sin(el) * t - (NADE_G * t * t) / 2, 3) // halber Weg: Höhe wie der echte Wurf, nicht der gestauchte Bogen
+    expect(p.filter(q => q[1] === 300).length).toBeGreaterThan(5) // fällt am Ziel
+    expect(approxPath(from, { x: 1200, y: 300, z: 10 }, 0, { pitch: -20 }, 1, 0, 0).length).toBe(approxPath(from, { x: 1200, y: 300, z: 10 }, 0, { pitch: -20 }, 1).length) // passt: wie bisher
   })
   it('ohne Blick: flacher Wurf mit voller Stärke, Flugzeit passt zur Schwerkraft', () => {
     const p = approxPath(from, { x: 1000, y: 0, z: 64 }, 0, undefined, 1), T = p[p.length - 1][0] / 64
@@ -74,6 +84,16 @@ describe('synthLineup', () => {
     expect([before(BTN.ATTACK2), before(BTN.ATTACK), before(BTN.JUMP), before(BTN.DUCK), before(BTN.FORWARD)]).toEqual([true, false, false, true, true])
     expect([rel(BTN.ATTACK2), rel(BTN.JUMP)]).toEqual([false, true])
     expect(early(BTN.ATTACK2) || early(BTN.FORWARD)).toBe(false)
+  })
+
+  it('Hände: Granate ab Frame 1 (Ziehen), weapon_fire beim Loslassen (Pin + Wurf wie in Demos), danach leer; Agent der Lineup-Seite', () => {
+    const s = synthLineup({ ...base, side: 'CT', type: 'molotov', technique: ['jumpthrow', 'right'] }, null), d = s.data.d
+    const w = Array.from(d.weapon), release = s.throwTick - 8, fi = (release - d.header.rounds[0].firstTick) / 4
+    expect([w[0], w[1], w[fi], w[w.length - 1]]).toEqual([0, 48, 48, 0])
+    expect([d.evt.type[0], d.evt.tick[0], d.header.strings[d.evt.arg[0]]]).toEqual([EV.weapon_fire, release, 'weapon_incgrenade'])
+    expect(d.header.players[0].agent).toEqual({ T: AGENT_DEFAULT.CT, CT: AGENT_DEFAULT.CT })
+    const W = { 48: { vm: { roles: { idle: 'i', draw: 'd', pullpin: 'p', shoot: 's', throw_under: 'u' }, dur: { d: 1, p: 1, s: 0.7, u: 0.5 } } } } as unknown as WeaponAssets
+    expect(actionsOf(d, W).list(0).map(a => a.kind)).toEqual(['draw', 'pullpin', 'throw_under']) // Rechtsklick = Unterhand
   })
 
   it('ohne Höhen und ohne Blick: z aus dem Raster, Blick aufs Ziel, Ziel-Markierung am Boden', () => {

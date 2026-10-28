@@ -394,8 +394,8 @@ export const createEffects: CreateEffects = ctx => {
           const type = N.type[i], det = N.detTick[i]
           if (tick < det) continue
           if (type === NADE.he) {
-            if (Number.isNaN(heGround[i])) heGround[i] = N.z[i] + 8 - ctx.raycast(worldToGltf(N.x[i], N.y[i], N.z[i] + 8, dO), dD.set(0, -1, 0), 120 * HU) / HU
-            if (heGround[i] === -Infinity) continue // in der Luft
+            if (Number.isNaN(heGround[i]) && ctx.rayReady?.() !== false) heGround[i] = N.z[i] + 8 - ctx.raycast(worldToGltf(N.x[i], N.y[i], N.z[i] + 8, dO), dD.set(0, -1, 0), 120 * HU) / HU
+            if (!(heGround[i] > -Infinity)) continue // in der Luft (NaN: Gitter lädt noch)
             const sd = hash(i * 3 + 7)
             puff.add(worldToGltf(N.x[i], N.y[i], heGround[i] + 0.8, P), 75 * HU, 0.02, 0.018, 0.016, 0.85 * Math.min(1, (tick - det) / rate / 0.2), 0, sd * 6.3, sd, 1)
           } else if ((type === NADE.molotov || type === NADE.incgrenade) && N.endTick[i] > det) fire.scorch(i, tick)
@@ -448,7 +448,7 @@ export const createEffects: CreateEffects = ctx => {
       glow.flush(); puff.flush(); streak.flush(); decals.flush()
       lights.flush(cam)
       smoke.end()
-      smoke.work(3); fire.work(1)
+      if (ctx.rayReady?.() !== false) { smoke.work(3); fire.work(1) } // ohne Kollisionsgitter flösse der Rauch durch Wände (und bliebe so gemerkt)
       const o = getOptions()
       trails.update(tick, o.xray && o.nadeTrails, camera)
       impacts.update(tick, o.impacts, camera)

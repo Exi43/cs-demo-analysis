@@ -1,5 +1,5 @@
 import type { MatchData, MatchSummary } from '../shared/model'
-import type { Api3D, MapAssetManifest } from '../shared/assets3d'
+import type { Api3D, PreviewAssets } from '../shared/assets3d'
 import type { Avatars, HudAssetManifest, HudTrack } from '../shared/hud'
 import type { UtilityApi } from '../shared/utility-api'
 import type { ThrowCandidate } from '../shared/utility'
@@ -40,10 +40,10 @@ interface Api extends Api3D, UtilityApi {
   /** 'log:show': app.log im Explorer zeigen */
   showLog(): Promise<void>
   /**
-   * 'assets3d:prepareMap': nur die Map bauen bzw. aus dem Cache (Vorschau eines Lineups ohne Demo), Fortschritt über onPrepareStatus
+   * 'assets3d:prepareMap': Map + Vorschau-Kit bauen bzw. aus dem Cache (Vorschau eines Lineups ohne Demo), Fortschritt über onPrepareStatus
    * (id 'map:<name>'); background = schonend, sonst volle Kraft (Dialog wartet)
    */
-  prepareMap(map: string, background?: boolean): Promise<MapAssetManifest>
+  prepareMap(map: string, background?: boolean): Promise<PreviewAssets>
   /** 'utility:throws': Granatenwürfe aller importierten Matches (map: nur diese) als Lineup-Vorschläge */
   utilityThrows(map?: string): Promise<ThrowCandidate[]>
   // Team-Sync (main/team.ts): Sitzung verschlüsselt, Cache des Team-Stands, Clip-Cache, Bilder der Team-Lineups

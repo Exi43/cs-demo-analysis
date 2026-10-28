@@ -36,8 +36,9 @@ describe('utility-pack', () => {
     expect(l).toMatchObject({ type: 'smoke', side: 'T', technique: ['jumpthrow', 'left'], tags: ['pro', 'default'], owner: 'local', images: [], createdAt: 5 })
     expect(l.stand).toEqual(good[0].lineup.stand) // Repräsentant = Median-Wurf, Werte exakt aus der Demo
     expect(l.title).toMatch(/smoke from /)
-    expect(l.description).toMatch(/thrown 4× by 3 pro players$/)
-    expect(l.steps).toContain('Jumpthrow with left click')
+    expect(l.description).toBe('Thrown 4× by pros')
+    expect(l.steps).toEqual([]) // Technik steht als Chip, Stand/Blick zeigen die Bilder
+    expect(l.fields).toBeUndefined()
     expect(l.demo).toBeUndefined()
     expect(packLineups([...good, ...onePlayer, ...shaky], 6)[0].id).toBe(l.id) // stabile ID
     expect(() => parseLibrary({ version: 1, lineups: out, tags: [], playbooks: [] })).not.toThrow()

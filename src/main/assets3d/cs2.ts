@@ -37,11 +37,14 @@ export function findCS2(): CS2 {
 /** Größe+mtime einer Datei als Cache-Schlüssel */
 export const fileKey = (f: string) => { const s = statSync(f); return `${s.size}:${Math.floor(s.mtimeMs)}` }
 
-/** VRF-CLI nach dir laden (einmalig, 52.8 MB), Rückgabe: Pfad der exe */
+/**
+ * VRF-CLI nach dir laden (einmalig, 52.8 MB), Rückgabe: Pfad der exe. Nie zweimal gleichzeitig (löschen sich den Ordner): in der App
+ * lädt nur der Main-Prozess (assets3d/index.ts vrfReady), der Worker findet die exe dann fertig vor.
+ */
 export async function ensureVrf(dir: string, onPct: (f: number) => void): Promise<string> {
   const exe = join(dir, 'Source2Viewer-CLI.exe'), stamp = join(dir, 'version.txt')
   if (existsSync(exe) && existsSync(stamp) && readFileSync(stamp, 'utf8') === VRF_VERSION) return exe
-  const res = await fetch(VRF_URL)
+  const res = await fetch(VRF_URL, { signal: AbortSignal.timeout(10 * 60e3) }) // hängt der Download, nicht die ganze Bau-Schlange
   if (!res.ok || !res.body) throw new Error(`Downloading Source 2 Viewer failed (HTTP ${res.status}). Check the internet connection.`)
   const total = Number(res.headers.get('content-length')) || 52.8e6
   const parts: Uint8Array[] = []

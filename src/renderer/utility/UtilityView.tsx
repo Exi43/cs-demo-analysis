@@ -1,6 +1,7 @@
 // Utility-Dashboard (Seitenleiste „Utility“, unabhängig von Demos): lädt die Bibliothek, speichert jede Änderung (kurz verzögert, beim
 // Verlassen sofort), Kopfzeile mit Import/Export und Team-Status, Seiten Start / Map / Lineup / Editor, 3D-Vorschau als Ebene.
-// Selbsttest-Hash: #utility[/<map>[/radar|list|cards|focus|playbook|export|lineup[/<id>[/clip]]|add/<schritt>]] oder #utility/import (Datei aus CSDA_UTIL_IMPORT)
+// Selbsttest-Hash: #utility[/<map>[/radar|list|cards|focus|playbook|export|lineup[/<id>[/clip]]|add/<schritt>]] oder #utility/import (Datei aus CSDA_UTIL_IMPORT);
+// #utility/capture rendert statt des Dashboards die Bilder aller Lineups der Datei (capture/CaptureAll.tsx, Startpaket)
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { Lineup, UtilityLibrary } from '../../shared/utility'
 import { api } from '../api'
@@ -12,6 +13,7 @@ import { ExportDialog, ImportDialog, type ImportData } from './ImportExport'
 import { MapPage } from './MapPage'
 import { mapName } from './maps'
 import { newDraft } from './ops'
+import { MapsStatus } from './preview/MapsStatus'
 import { ClipDialog } from './TeamClip'
 import { teamStore } from '../team/store'
 import { UtilCtx, live, type Ctx, type Route } from './ui'
@@ -19,6 +21,7 @@ import './utility.css'
 
 // 3D-Vorschau erst beim Öffnen laden (der Vorschau-Zweig bringt three.js mit)
 const LineupPreview3D = lazy(() => import('./preview/LineupPreview3D').then(m => ({ default: m.LineupPreview3D })))
+const CaptureAll = lazy(() => import('./capture/CaptureAll').then(m => ({ default: m.CaptureAll })))
 type Mode = 'radar' | 'list' | 'cards'
 const errText = (e: unknown) => String((e as Error)?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 
@@ -48,7 +51,10 @@ function fromHash(hash: string, lib: UtilityLibrary): { route: Route; mode?: Mod
   return { route: home }
 }
 
-export function UtilityView({ hash = '' }: { hash?: string }) {
+export const UtilityView = ({ hash = '' }: { hash?: string }) =>
+  hash === 'utility/capture' ? <Suspense fallback={null}><CaptureAll /></Suspense> : <Utility hash={hash} />
+
+function Utility({ hash }: { hash: string }) {
   const [lib, setLib] = useState<UtilityLibrary>()
   const [maps, setMaps] = useState<Ctx['maps']>()
   const [failed, setFailed] = useState<string>()
@@ -126,6 +132,7 @@ export function UtilityView({ hash = '' }: { hash?: string }) {
             {route.page !== 'home' && crumbs.map(([label, r], i) => <span key={i}>{r ? <button onClick={() => go(r)}>{label}</button> : <b>{label}</b>}</span>)}
           </nav>
           <div className="ut-head-actions">
+            <MapsStatus />
             <button className="ut-btn ghost" onClick={startImport} title="Import lineups from a .csutil file"><Icon name="folder" size={16} /> Import</button>
             <button className="ut-btn ghost" onClick={() => setExp({})} disabled={!live(all).length} title="Export lineups as a .csutil file"><Icon name="upload" size={16} /> Export</button>
             <button className={`ut-team ${ts.team ? (ts.online ? 'on' : 'off') : ''}`} onClick={openTeam}

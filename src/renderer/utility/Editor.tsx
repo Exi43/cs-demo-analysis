@@ -5,6 +5,7 @@ import type { Lineup } from '../../shared/utility'
 import { BUILTIN_TECHNIQUES, MAX_IMAGES, isWebUrl, parseLibrary } from '../../shared/utility-lib'
 import { api } from '../api'
 import { Icon } from '../icons'
+import { GenerateImages } from './capture/GenerateImages'
 import { POOL, TYPES, fromRadar, imageUrl, isLower, lowerMax, mapColor, mapName, radarUrl, suggestTitle, toRadar } from './maps'
 import { addTechnique, saveLineup } from './ops'
 import { Radar } from './Radar'
@@ -202,7 +203,7 @@ export function Editor({ draft: initial, isNew, step: s0, back }: { draft: Draft
                   onDrop={e => { e.preventDefault(); const p = [...e.dataTransfer.files].map(f => api.pathForFile(f)).filter(Boolean); if (p.length) addImages(p) }}>
                   {d.images.map((h, i) => (
                     <div key={h} className="ut-drop-img">
-                      <img src={imageUrl(h)} alt="" loading="lazy" />
+                      <img src={imageUrl(h)} alt="" loading="lazy" decoding="async" />
                       {i > 0 && <button className="ut-drop-cover" title="Make cover" onClick={() => set({ images: [h, ...d.images.filter(x => x !== h)] })}><Icon name="star" size={12} /></button>}
                       <button className="ut-drop-x" title="Remove image" onClick={() => set({ images: d.images.filter(x => x !== h) })}><Icon name="x" size={12} /></button>
                     </div>
@@ -212,6 +213,7 @@ export function Editor({ draft: initial, isNew, step: s0, back }: { draft: Draft
                       <Icon name="upload" size={22} /><span>{busy ? 'Processing…' : 'Drop, paste (Ctrl+V) or browse'}</span>
                     </button>
                   )}
+                  <GenerateImages l={d} variant="tile" onImages={images => set({ images })} />
                 </div>
               </div>
 
@@ -251,7 +253,7 @@ export function Editor({ draft: initial, isNew, step: s0, back }: { draft: Draft
                 ))}
                 <button className="ut-link small" onClick={() => setFields([...fields, [`Field ${fields.length + 1}`, '']])}>+ Add field</button>
               </div>
-              <div className="ut-field"><span>Aim <small>view angle when throwing (CS2 degrees, optional)</small></span>
+              <div className="ut-field"><span>Aim <small>view angle when throwing (CS2 degrees), needed to generate images</small></span>
                 <div className="ut-row2">
                   <input className="ut-input small" type="number" step="0.1" placeholder="Pitch" value={d.aim?.pitch ?? ''} onChange={e => set({ aim: e.target.value === '' ? undefined : { pitch: Math.max(-90, Math.min(90, Number(e.target.value))), yaw: d.aim?.yaw ?? 0 } })} />
                   <input className="ut-input small" type="number" step="0.1" placeholder="Yaw" value={d.aim?.yaw ?? ''} onChange={e => set({ aim: e.target.value === '' ? undefined : { pitch: d.aim?.pitch ?? 0, yaw: Math.max(-360, Math.min(360, Number(e.target.value))) } })} />

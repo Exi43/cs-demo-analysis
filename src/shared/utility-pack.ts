@@ -3,7 +3,6 @@
 // Nachbarn zuerst). Ins Paket nur Bündel, die mehrere Spieler in mehreren Matches mit derselben Technik geworfen haben.
 import { calloutName, nadeName, placeAtPoint } from './analysis/maps/index.ts'
 import type { Lineup, NadeType, Tag, ThrowCandidate } from './utility.ts'
-import { techniqueStep } from './utility-capture.ts'
 import { BUILTIN_TECHNIQUES } from './utility-lib.ts'
 
 /** Wurf mit Rundenlage: s nach Freezetime-Ende, Bombe gelegt (s, fehlt = kein Plant) */
@@ -91,31 +90,18 @@ export function lineupOfCluster(c: PackThrow[], now: number): (Lineup & { thrown
   const hit = nadeName(map, { type: rep.type, land: [l.target.x, l.target.y, l.target.z ?? 0], throw: [l.stand.x, l.stand.y, (l.stand.z ?? 0) + 64], side: rep.side })
   const name = hit.named ? hit.name.replace(/ molly$/, ' molotov') : to ? `${to} ${WORD[rep.type]}` : `${WORD[rep.type][0].toUpperCase()}${WORD[rep.type].slice(1)}`
   const title = [name, from && !name.startsWith(`${from} `) ? `from ${from}` : ''].filter(Boolean).join(' ')
-  const spot = hit.named ? name.replace(/ \S+$/, '') : to, at = spot ? ` at ${spot}` : '' // Ort wie im Titel
-  const what = rep.type === 'smoke' ? `Blocks the ${rep.side === 'T' ? 'CT' : 'T'} view${at}` : rep.type === 'molotov' ? `Clears or delays players${at}`
-    : rep.type === 'flash' ? `Flashes players${at}` : `Damages players${at}`
   // Tags: T zu ≥ 50 % höchstens 25 s vor dem Plant = Execute, sonst früh (Median ≤ 30 s) = Default; CT zu ≥ 50 % nach dem Plant = Retake
   const share = (f: (t: PackThrow) => boolean) => c.filter(f).length / c.length >= 0.5
   const tags = ['pro']
   if (rep.side === 'T' && share(t => t.plantSec !== undefined && t.plantSec >= t.sec && t.plantSec - t.sec <= 25)) tags.push('execute')
   else if (rep.side === 'T' && median(c.map(t => t.sec)) <= 30) tags.push('default')
   if (rep.side === 'CT' && share(t => t.plantSec !== undefined && t.sec > t.plantSec)) tags.push('retake')
-  const r1 = (v: number) => Math.round(v * 10) / 10
-  const click = technique.find(t => t === 'left' || t === 'right' || t === 'both'), with_ = click ? ` with ${{ left: 'left click', right: 'right click', both: 'left + right click' }[click]}` : ''
-  const how = technique[0] === 'jumpthrow' ? `Jumpthrow${with_}` : technique[0] === 'wjumpthrow' ? `Hold W, then jumpthrow${with_}` : techniqueStep(technique)
-  const names = [...new Set(c.map(t => t.player))].sort((a, b) => a.localeCompare(b))
+  // keine Schritte: Stand und Blick zeigen die Bilder (scripts/starter-pack.ts images) und die 3D-Vorschau, die Technik steht als Chip (Berat: keine unnötige Erklärung)
   return {
     id: stableId(`${map}|${rep.type}|${rep.side}|${Math.round(l.stand.x)}|${Math.round(l.stand.y)}|${Math.round(l.target.x)}|${Math.round(l.target.y)}`),
-    map, type: rep.type, side: rep.side, title,
-    description: `${what}; thrown ${c.length}× by ${players.size} pro players`,
-    stand: l.stand, target: l.target, aim: l.aim, technique,
-    steps: [
-      `Stand at the marked spot${from ? ` in ${from}` : ''}`,
-      `Aim ${l.aim!.pitch >= 0 ? `${r1(l.aim!.pitch)}° down` : `${r1(-l.aim!.pitch)}° up`}, yaw ${r1(l.aim!.yaw)}° (see the 3D preview)`,
-      how,
-      `Practice server: setpos ${l.stand.x} ${l.stand.y} ${l.stand.z ?? 0}; setang ${l.aim!.pitch} ${l.aim!.yaw} 0`,
-    ],
-    images: [], tags, fields: { 'Pro players': names.join(', ') }, owner: 'local', createdAt: now, updatedAt: now, thrown: c.length,
+    map, type: rep.type, side: rep.side, title, description: `Thrown ${c.length}× by pros`,
+    stand: l.stand, target: l.target, aim: l.aim, technique, steps: [],
+    images: [], tags, owner: 'local', createdAt: now, updatedAt: now, thrown: c.length,
   }
 }
 

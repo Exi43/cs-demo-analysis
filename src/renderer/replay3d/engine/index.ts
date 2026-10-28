@@ -44,8 +44,8 @@ const SNIPER = /awp|ssg|g3sg1|scar-20/i
 const FLY = 600, LOOK = 0.15
 /** Free-Cam näher als so viele u an der Körperachse (Füße bis Auge) eines Spielers: Modell ausblenden */
 const NEAR_U = 40
-/** Utility-Vorschau, Granate folgen: Kamera so weit hinter (m) und über (m) dem Projektil */
-const FOLLOW_M = 1.3, FOLLOW_UP = 0.35
+/** Utility-Vorschau, Granate folgen: Kamera so weit hinter (m) und über (m) dem Projektil; Außenansicht ohne freien Kreis: Schwenk ± (rad) */
+const FOLLOW_M = 1.3, FOLLOW_UP = 0.35, SWEEP = 35 * (Math.PI / 180)
 /** Free-Cam-Bewegungstasten (hotkeys.ts); camFast allein bewegt nicht */
 const MOVE: HotkeyAction[] = ['camForward', 'camBack', 'camLeft', 'camRight', 'camUp', 'camDown']
 /** horizontales CS-FOV (4:3) → vertikales FOV */
@@ -62,7 +62,7 @@ interface Death { tick: number; att: number; hs: boolean; rag?: Ragdoll | null }
 /** Treffer-Stärke (m/s am getroffenen Teil) nach Waffenklasse; CS2-Kräfte stehen nicht in den Daten, nach Bild gewählt. Sonst Pistole 4, Gewehr 5,5 */
 const PUSH: [RegExp, number][] = [[/knife|bayonet/, 2.5], [/taser/, 1.5], [/awp/, 9], [/ssg08|deagle|revolver|nova|xm1014|mag7|sawedoff/, 7], [/g3sg1|scar20/, 6.5], [/mac10|mp9|mp7|mp5sd|ump45|p90|bizon/, 4]]
 
-export const createEngine: CreateEngine = async (canvas, assets, data, onProgress) => {
+export const createEngine: CreateEngine = async (canvas, assets, data, onProgress, opts) => {
   const t0 = performance.now()
   const d = data.d, H = d.header, step = H.frameStep, rate = H.tickrate, P = H.players
   if (!H.rounds.length) throw new Error('This match has no 3D data.')
@@ -183,8 +183,8 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       return b
     })()
 
-    // ab dem ersten Bild fertig (await rayP unten); nur wenn der Worker scheitert, trifft der Raycast nie etwas
-    let ray: Raycast = () => Infinity, mapRay: MapRaycast | null = null // mapRay.near: Dreiecke für die Ragdolls
+    // ab dem ersten Bild fertig (await rayP unten; lazyRay: kurz danach, rayDone); nur wenn der Worker scheitert, trifft der Raycast nie etwas
+    let ray: Raycast = () => Infinity, mapRay: MapRaycast | null = null, rayDone = false // mapRay.near: Dreiecke für die Ragdolls
     const raycast: Raycast = (o, d, far) => ray(o, d, far)
 
     // ---------------------------------------------------------------- Effekte
@@ -193,7 +193,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     // Flash-Nachbild: Kopie des Canvas nach dem Endpass (vor Flash-Schicht und Granaten-Kamera), nur auf Anfrage; gültig im Bild danach
     let frameNo = 0, capAt = -2, capWant = false, capTex: THREE.FramebufferTexture | null = null
     const ctx: EffectsContext = {
-      scene, camera, data, assets, lights, raycast,
+      scene, camera, data, assets, lights, raycast, rayReady: () => rayDone,
       muzzle: (p, out) => active[p]?.muzzle(out, silenced[p] === 1) ?? false,
       captureFrame() { if (capAt === frameNo) return capTex; capWant = true; return null },
     }
@@ -218,8 +218,12 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     // vmTpl/vmOk: Schlüssel def bzw. −def (Legacy-Mesh für Legacy-Skins)
     const vms = new Map<string, Viewmodel>(), vmTpl = new Map<number, VmTemplate>(), vmOk = new Map<Viewmodel, Set<number>>(), vmBusy = new Set<string>()
     const vmRoots: THREE.Object3D[] = [] // für dispose
+    const loading = new Set<Promise<void>>() // laufende Nachlade-Aufträge (warm wartet darauf)
     const later = (key: string, job: () => Promise<void>) => {
-      if (!vmBusy.has(key)) { vmBusy.add(key); job().then(touch, e => console.warn('lazy load', key, e)) }
+      if (vmBusy.has(key)) return
+      vmBusy.add(key)
+      const p = job().then(touch, e => console.warn('lazy load', key, e))
+      loading.add(p); void p.then(() => loading.delete(p))
     }
     const worldSeen = new Set<number>(), animCache = new Map<string, Promise<THREE.AnimationClip[]>>()
     /** Welt-Clips einer Waffe einmal laden (eine GLB je Waffenklasse) und allen Agenten geben (worldClips macht shoot_* additiv) */
@@ -368,25 +372,38 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     const bv = new THREE.Vector3(), by = (b: THREE.Object3D | undefined, def: number) => (b ? b.getWorldPosition(bv).y : def)
 
     const cam = { mode: 'free' as CameraMode, focus: -1, x: 0, y: 0, z: 0, yaw: 0, pitch: 45 }
-    let focusK = -1 // Track-Index des Fokus-Spielers in der aktuellen Runde
+    let focusK = -1, warming = false // Track-Index des Fokus-Spielers in der aktuellen Runde; warm(): alle Agenten zeigen
     // Utility-Vorschau: Zoom der Grundkamera, übersteuerte Kamera (setView) mit Überblendung aus Pose p0/q0/f0 ab Tick t0 über dur Ticks
-    let zoom = 1, view: { v: LineupView; t0: number; dur: number; p0: THREE.Vector3; q0: THREE.Quaternion; f0: number; elev?: number } | null = null
-    const vP = new THREE.Vector3(), vL = new THREE.Vector3(), vD = new THREE.Vector3(0, 0, 1), vQ = new THREE.Quaternion(), vM = new THREE.Matrix4()
-    const orbitPos = (o: Extract<LineupView, { orbit: unknown }>['orbit'], a: number, elev: number) => {
+    type Orbit = Extract<LineupView, { orbit: unknown }>['orbit']
+    let zoom = 1, view: { v: LineupView; t0: number; dur: number; p0: THREE.Vector3; q0: THREE.Quaternion; f0: number; pick?: { elev: number; yaw: number; sweep: number } } | null = null
+    const vP = new THREE.Vector3(), vL = new THREE.Vector3(), vD = new THREE.Vector3(0, 0, 1), vB = new THREE.Vector3(), vQ = new THREE.Quaternion(), vM = new THREE.Matrix4()
+    const orbitPos = (o: Orbit, a: number, elev: number) => {
       const ce = Math.cos(elev * D2R), c = o.center
       worldToGltf(c[0] + Math.cos(a) * ce * o.dist, c[1] + Math.sin(a) * ce * o.dist, c[2] + Math.sin(elev * D2R) * o.dist, vP); worldToGltf(...c, vL)
     }
+    /** freier Anteil (0..1) der Sichtlinie von der Mitte zur Kamera bei Winkel a (rad), Höhe elev (°) */
+    const freeAt = (o: Orbit, a: number, elev: number) => { orbitPos(o, a, elev); const far = vP.distanceTo(vL); return Math.min(1, raycast(vL, vD.subVectors(vP, vL).normalize(), far) / far) }
     /**
-     * Höhe der Kreisfahrt einmal je Außenansicht: die flachste, bei der der Kreis (16 Richtungen) zu mind. 60 % frei bleibt; sonst (z. B. Smoke
-     * unter dem Dach der Mid-Doors, alles nach ~50 u zu) fast senkrecht von oben. Der Wand-Stopp holte die Kamera sonst bis in den Rauch.
+     * Außenansicht einmal je Ansicht wählen: flachste Höhe ab o.elev, bei der der ganze Kreis (16 Richtungen) zu mind. 60 % frei bleibt →
+     * volle Kreisfahrt ab yaw0. Sonst (Ziel unter Dach/Vorsprung oder eng zwischen Wänden) die freieste Richtung über alle Höhen, bei Gleichstand
+     * nahe Wurfrichtung und o.elev, dort ±SWEEP hin und her (nur so weit frei): die volle Runde bzw. „senkrecht von oben“ zeigte sonst Wände
+     * oder das Dach über dem Rauch (Mirage Window-Smoke: Ring auf dem Dach, Rauch unsichtbar).
      */
-    const orbitElev = (o: Extract<LineupView, { orbit: unknown }>['orbit']) => {
-      for (const e of [o.elev, 55, 70].filter(e => e >= o.elev)) {
-        let free = Infinity
-        for (let i = 0; i < 16 && free >= 0.6; i++) { orbitPos(o, (i * Math.PI) / 8, e); const far = vP.distanceTo(vL); free = Math.min(free, raycast(vL, vD.subVectors(vP, vL).normalize(), far) / far) }
-        if (free >= 0.6) return e
+    const orbitPick = (o: Orbit) => {
+      const y0 = o.yaw0 * D2R
+      let elev = 85, yaw = y0, score = -Infinity
+      for (const e of [o.elev, 55, 70, 85, 25, 10]) {
+        let all = true
+        for (let i = 0; i < 16; i++) {
+          const a = y0 + (i * Math.PI) / 8, f = freeAt(o, a, e), s = f + 0.05 * Math.cos(a - y0) - 0.002 * Math.abs(e - o.elev)
+          all &&= f >= 0.6
+          if (s > score) { score = s; elev = e; yaw = a }
+        }
+        if (all && e >= o.elev) return { elev: e, yaw: y0, sweep: 0 }
       }
-      return 85
+      let sweep = SWEEP
+      while (sweep > 0.1 && Math.min(freeAt(o, yaw + sweep, elev), freeAt(o, yaw - sweep, elev)) < 0.6) sweep /= 2
+      return { elev, yaw, sweep }
     }
 
     function updateAgents(r: number, t: number, dt: number, snap: boolean) {
@@ -420,8 +437,8 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
         ag.light(grid, s.x, s.y, s.z, dt, snap)
         ag.root.updateMatrixWorld(true) // Mündung und Kopf für Effekte/Schild
         // Ego: eigener Körper weg; Free-Cam/setView im Körper (Start am Augpunkt nach Ego→Free, Durchfliegen): sonst füllt sein Inneres das Bild
-        ag.root.visible = cam.mode === 'ego' && !view ? p !== cam.focus
-          : Math.hypot(s.x - cx, s.y - cy, cz - Math.min(Math.max(cz, s.z), eyeZ(s.z, s.duck))) >= NEAR_U
+        ag.root.visible = warming || (cam.mode === 'ego' && !view ? p !== cam.focus
+          : Math.hypot(s.x - cx, s.y - cy, cz - Math.min(Math.max(cz, s.z), eyeZ(s.z, s.duck))) >= NEAR_U)
         active[p] = ag; silenced[p] = s.flags & FLAG.silencer ? 1 : 0
         // X-Ray + Schadens-Rot (an X-Ray gekoppelt) nur Lebende; Rot von den Füßen bis Höhe × fehlende HP (nicht nur der letzte Treffer),
         // blinkt einige Sekunden nach jedem Treffer; Füße/Scheitel aus der Pose (Sprung, Ducken)
@@ -480,11 +497,17 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       if (zoom !== 1) fov = (2 * Math.atan(Math.tan((fov * D2R) / 2) / zoom)) / D2R
       if (view) { // Granate folgen (Pose wie die Granaten-Kamera) bzw. fester Blick, weich aus der Kamera davor (smoothstep über die Demo-Zeit)
         const v = view.v
-        if ('nade' in v) { nadePose(d, v.nade, t, vP, vD); vL.copy(vP).add(vD); vP.addScaledVector(vD, -FOLLOW_M).y += FOLLOW_UP }
+        if ('nade' in v) {
+          nadePose(d, v.nade, t, vP, vD); vL.copy(vP).add(vD)
+          // hinter und über der Granate, aber nicht in einer Wand (Wurf durch Tür/Fenster, Abpraller): bis kurz vor den Treffer
+          vB.copy(vD).multiplyScalar(-FOLLOW_M).y += FOLLOW_UP
+          const len = vB.length(), hit = raycast(vP, vB.normalize(), len)
+          vP.addScaledVector(vB, Math.min(len, Math.max(0.1, hit - 0.2)))
+        }
         else if ('orbit' in v) {
-          const o = v.orbit
-          view.elev ??= orbitElev(o)
-          orbitPos(o, (o.yaw0 + (360 * (t - o.t0)) / (o.turnS * rate)) * D2R, view.elev)
+          const o = v.orbit, pk = view.pick ?? orbitPick(o), k = (t - o.t0) / (o.turnS * rate)
+          if (rayDone) view.pick = pk // ohne Gitter wäre alles „frei“
+          orbitPos(o, pk.yaw + (pk.sweep ? pk.sweep * Math.sin(2 * Math.PI * k) : 2 * Math.PI * k), pk.elev)
           const far = vP.distanceTo(vL), hit = raycast(vL, vD.subVectors(vP, vL).normalize(), far) // nicht durch Wände: vor dem Treffer halten
           // höchstens bis knapp außerhalb des Rauchs (~150 u): unter einem Dach blickt die Kamera dann durch die Wand, sieht aber den Smoke
           if (hit < far) vP.copy(vL).addScaledVector(vD, Math.max(0.45 * far, hit - 0.4))
@@ -662,9 +685,10 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     await warmP
     scene.remove(warm)
     warm.traverse(o => { const m = (o as THREE.Mesh).material; if (m) for (const x of Array.isArray(m) ? m : [m]) x.dispose() })
-    // Rauch/Feuer/Tracer cachen Treffer-Abstände: nie ohne Wände rechnen
-    mapRay = await rayP
-    ray = mapRay ?? ray
+    // Rauch/Feuer/Tracer cachen Treffer-Abstände: nie ohne Wände rechnen (lazyRay: Effekte füllen erst danach, ctx.rayReady)
+    const useRay = (r: MapRaycast | null) => { mapRay = r; ray = r ?? ray; rayDone = true }
+    if (opts?.lazyRay) void rayP.then(r => { if (!disposed) { useRay(r); touch() } })
+    else useRay(await rayP)
     setTime(H.rounds[0].firstTick)
     gl.finish()
     loadMs = Math.round(performance.now() - t0)
@@ -687,6 +711,12 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
         view = v && { v, t0, dur: blendS * rate, p0: camera.position.clone(), q0: camera.quaternion.clone(), f0: camera.fov }
         dirty = true
       },
+      // erstes Bild mit allen Agenten (auch dem eigenen, er steht im Schattenbereich): Schatten-Programme jetzt statt beim ersten Zeigen
+      // (Vorschau: Außenansicht ruckelte 190 ms); Viewmodel braucht bis zu drei Runden (Arme + Waffe laden, dann anhängen und übersetzen)
+      async warm(tick) {
+        warming = true; setTime(tick); warming = false
+        for (let i = 0; i < 4 && !disposed; i++) { setTime(tick); if (!loading.size) return; await Promise.all(loading) }
+      },
       dirty: () => dirty || moving() || effects.pending() || post.adapting(),
       get onDirty() { return onDirty },
       set onDirty(f) { onDirty = f },
@@ -694,6 +724,11 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       listener() {
         const f = camera.getWorldDirection(fwd)
         return { x: camera.position.z / HU, y: camera.position.x / HU, z: camera.position.y / HU, yaw: Math.atan2(f.x, f.z) / D2R, ego: cam.mode === 'ego' && focusK >= 0 ? cam.focus : -1 }
+      },
+      raycast(a, b) {
+        const o = worldToGltf(...a, new THREE.Vector3()), v = worldToGltf(...b, new THREE.Vector3()).sub(o), far = v.length()
+        const hit = far > 0 ? raycast(o, v.normalize(), far) : Infinity
+        return hit < far ? hit / HU : Infinity
       },
       stats() {
         const i = renderer.info

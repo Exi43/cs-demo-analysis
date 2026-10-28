@@ -1,8 +1,11 @@
 // Kamera-Ablauf der Lineup-Vorschau (rein, ohne three): je Tick Ego mit Zoom → Granate folgen → Außenansicht als Kreisfahrt
 // von oben um die Wirkung. Ausgeführt von der Engine (setZoom, setView). Test: camera.test.ts.
 type V3 = [number, number, number]
-/** Überblendung (s) Ego → Granate bzw. → Außenansicht; Außenansicht steht ab der Wirkung so lange (s), dann zurück zum Start */
-export const FOLLOW_BLEND = 0.35, OUT_BLEND = 0.8, OUT_S = 5
+/**
+ * Überblendung (s) Ego → Granate bzw. → Außenansicht; Außenansicht steht ab der Wirkung so lange (s), dann zurück zum Start. Der Granate
+ * folgen ab FOLLOW_AFTER (s) nach dem Abflug: vorher sieht man in Ego die Wurfbewegung der Hände (Kamera „setView“ blendet das Viewmodel aus)
+ */
+export const FOLLOW_BLEND = 0.35, OUT_BLEND = 0.8, OUT_S = 5, FOLLOW_AFTER = 0.3
 /** Außenansicht: Kreisfahrt um die Wirkung (Berat: von oben, ein paar Meter weg, 360°) – Abstand in Source-Units (~13 m), Höhe in Grad */
 export const ORBIT_DIST = 520, ORBIT_ELEV = 40
 
@@ -15,9 +18,16 @@ export function orbitView(target: V3, from: V3, det: number) {
 export const ZOOMS = [1, 2, 4]
 const D2R = Math.PI / 180
 
-/** 0 = Ego (vor dem Wurf, oder ohne „Follow grenade“), 1 = Granate folgen bis zur Wirkung, 2 = Außenansicht */
-export const phaseAt = (tick: number, throwTick: number, det: number, follow: boolean): 0 | 1 | 2 =>
-  !follow || tick < throwTick ? 0 : tick < det ? 1 : 2
+/** 0 = Ego (bis followAt, oder ohne „Follow grenade“), 1 = Granate folgen bis zur Wirkung, 2 = Außenansicht */
+export const phaseAt = (tick: number, followAt: number, det: number, follow: boolean): 0 | 1 | 2 =>
+  !follow || tick < Math.min(followAt, det) ? 0 : tick < det ? 1 : 2
+
+/**
+ * Markierungen: 2 = Flugbahn + Ziel (Außenansicht; angenähert auch in Ego nach dem Wurf ohne Folgen), 1 = nur Ziel (angenähert in Ego:
+ * vor dem Wurf lief die Linie durchs Fadenkreuz und verdeckte den Zielpunkt), 0 = keine (Granate folgen: Linie direkt vor der Kamera; echte Bahn in Ego)
+ */
+export const marksAt = (phase: 0 | 1 | 2, tick: number, throwTick: number, approx: boolean, follow: boolean): 0 | 1 | 2 =>
+  phase === 2 || (phase === 0 && approx && !follow && tick >= throwTick) ? 2 : phase === 0 && approx ? 1 : 0
 
 /** Zoom gilt vor dem Wurf, danach in 0,3 s weich zurück auf 1 */
 export function zoomAt(tick: number, throwTick: number, zoom: number, rate: number): number {

@@ -4,7 +4,7 @@ import { constants as zlibConstants, gunzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { CS3D_VERSION } from '../shared/cs3d.ts'
 import type { MatchSummary } from '../shared/model.ts'
-import { forgetPrepare, handleCs3d, onPrepareStatus, prepareForMatch, prepareMap, prepareStatus, serial } from './assets3d/index.ts'
+import { forgetPrepare, handleCs3d, onPrepareStatus, prebuildMaps, prepareForMatch, prepareMap, prepareStatus, serial } from './assets3d/index.ts'
 import { findCS2 } from './assets3d/cs2.ts'
 import { getAvatars } from './avatars.ts'
 import { noGame } from './game.ts'
@@ -168,8 +168,11 @@ ipcMain.handle('match:load3d', (_e, id: string) => {
 })
 ipcMain.handle('assets3d:prepare', (_e, id: string) => { log3dView(id); return prepareForMatch(id, file3d(id)) })
 ipcMain.handle('assets3d:statusAll', () => prepareStatus())
-// Utility-Seite: nur die Map für die Vorschau eines Lineups ohne Demo; Würfe aller Demos als Lineup-Vorschläge
-ipcMain.handle('assets3d:prepareMap', async (_e, map: string, background?: boolean) => (await prepareMap(String(map), !!background)).map)
+// Utility-Seite: Map + Vorschau-Kit für die Vorschau eines Lineups ohne Demo; Würfe aller Demos als Lineup-Vorschläge
+ipcMain.handle('assets3d:prepareMap', (_e, map: string, background?: boolean) => {
+  if (!background) log3dView(`map:${map}`, '3D preview')
+  return prepareMap(String(map), !!background)
+})
 ipcMain.handle('utility:throws', (_e, map?: string) => utilityThrows(dataDir, readIndex(), typeof map === 'string' ? map : undefined))
 onPrepareStatus(s => {
   log3d(s) // Bau-Start, Schritte, Ende/Fehler ins App-Protokoll
@@ -240,8 +243,10 @@ app.whenReady().then(async () => {
     createWindow()
     win.webContents.once('did-finish-load', () => {
       openFromArgs(process.argv)
-      // neueste Demos nach dem Start vorbereiten (nicht während das Fenster noch lädt)
+      // Pool-Maps (Lineup-Vorschau) und neueste Demos nach dem Start vorbereiten (nicht während das Fenster noch lädt); Maps halbstündlich
+      // neu prüfen (CS2-Update bei laufender App)
       setTimeout(() => {
+        prebuildMaps(); setInterval(prebuildMaps, 30 * 60e3)
         try { readIndex().sort((a, b) => b.parsedAt.localeCompare(a.parsedAt)).slice(0, START_PREPARE).forEach(s => prepare3dLater(s.id)) } catch (e) { console.warn('prepare3d at start', e) }
         reread3d().catch(e => console.warn('reread3d', e))
       }, 3000)
@@ -253,6 +258,7 @@ app.whenReady().then(async () => {
     await importDemo(process.env.CSDA_DEMO).catch(e => console.error('import failed', e))
   }
   createWindow()
+  if (process.env.CSDA_PREBUILD) prebuildMaps() // Selbsttest des Map-Vorbaus (sonst baut ein Selbsttest nichts ungefragt)
   // CSDA_READY=<ms>: erst warten, bis das 3D-Replay läuft (oder einen Fehler zeigt), dann CSDA_WAIT
   for (const end = Date.now() + Number(process.env.CSDA_READY ?? 0); Date.now() < end;) {
     if (await win.webContents.executeJavaScript(`!!document.querySelector('[data-h3-ready], .h3-fps, .h3-load .error')`)) break

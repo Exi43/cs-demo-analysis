@@ -1,8 +1,10 @@
-// Utility-Dashboard Detailseite: großes Bild (oder Radar-Ausschnitt), Schritte, rechts „Preview in 3D“, Infos, Radar, Video/Quelle,
+// Utility-Dashboard Detailseite: großes Bild (oder Radar-Ausschnitt; mit Stand + Blick „Generate images“ aus der 3D-Map), Schritte, rechts
+// „Preview in 3D“, Infos (ohne Blickwinkel-Zahlen: die zeigen Bilder und Vorschau), Radar, Video/Quelle,
 // Aktionen (Favorit, Bearbeiten, Duplizieren, Löschen mit Rückfrage), ähnliche Lineups.
 import { useState } from 'react'
 import { api } from '../api'
 import { Icon } from '../icons'
+import { GenerateImages } from './capture/GenerateImages'
 import { LineupCard, Star, TeamTag } from './cards'
 import { imageUrl, mapName, typeOf } from './maps'
 import { deleteLineup, duplicateLineup, patchLineup, playbookItems, savePlaybook, uid } from './ops'
@@ -23,6 +25,7 @@ export function Detail({ id, back }: { id: string; back: Route }) {
   const open = (u: { url?: string; local?: string }) => api.utilityOpen(u).catch(e => notify(String(e?.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), true))
   const cur = l.images[Math.min(img, l.images.length - 1)]
   const canEdit = l.owner === 'local' || team.store.canEdit(l.id) // Team-Lineups: eigene oder Admin
+  const setImages = (images: string[]) => { update(x => patchLineup(x, l.id, { images })); setImg(0); notify('Images generated') }
 
   return (
     <div className="ut-detail">
@@ -47,7 +50,11 @@ export function Detail({ id, back }: { id: string; back: Route }) {
         <div className="ut-detail-main">
           <div className="ut-media">
             {cur ? <img src={imageUrl(cur)} alt="" decoding="async" /> : <MiniRadar l={l} meta={meta} />}
-            {!cur && canEdit && <span className="ut-media-note">No images yet. <button className="ut-link" onClick={() => go({ page: 'edit', draft: l, isNew: false, step: 5, back: route })}>Add images</button></span>}
+            {cur && canEdit && <GenerateImages l={l} variant="corner" onImages={setImages} />}
+            {!cur && canEdit && (
+              <span className="ut-media-note">No images yet. <GenerateImages l={l} variant="button" onImages={setImages} />
+                <button className="ut-link" onClick={() => go({ page: 'edit', draft: l, isNew: false, step: 5, back: route })}>{l.aim ? 'Add your own' : 'Add images'}</button></span>
+            )}
           </div>
           {l.images.length > 1 && (
             <div className="ut-thumbs">
@@ -74,7 +81,6 @@ export function Detail({ id, back }: { id: string; back: Route }) {
             <div><label>Side</label><SideBadge side={l.side} /></div>
             <div><label>Technique</label><b>{l.technique.map(t => techLabel(lib, t)).join(' + ') || '–'}</b></div>
             <div><label>Grenade</label><b>{typeOf(l.type).label}</b></div>
-            {l.aim && <div><label>Aim</label><b>pitch {l.aim.pitch.toFixed(1)}°, yaw {l.aim.yaw.toFixed(1)}°</b></div>}
             {Object.entries(l.fields ?? {}).map(([k, v]) => <div key={k}><label>{k}</label><b>{v}</b></div>)}
             {tags.length > 0 && <div><label>Tags</label><span className="ut-chips">{tags.map(t => <span key={t.id} className="ut-tag" style={{ '--c': t.color } as React.CSSProperties}>{t.name}</span>)}</span></div>}
             {l.demo && <div><label>From demo</label><b>{l.demo.player ?? l.demo.steamid}{l.demo.round ? `, round ${l.demo.round}` : ''}</b></div>}

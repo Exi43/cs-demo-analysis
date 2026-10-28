@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Strat } from '../../shared/team'
 import type { MatchSummary } from '../../shared/model'
-import { diffStrat, inBook, learnSummary, tally, winRates } from './logic'
+import { diffStrat, inBook, learnSummary, smoothStroke, tally, touches, winRates } from './logic'
 import { MOCK_CODE, createMockTeam } from './mock'
 
 const proposal = (author: string, p: Partial<Strat> = {}): Strat => ({
@@ -94,5 +94,34 @@ describe('Lern-Status und Win-Rate', () => {
       de_nuke: { won: 1, played: 2 }, de_ancient: { won: 1, played: 1 }, de_inferno: { won: 1, played: 1 },
     })
     expect(winRates([m('de_nuke', 13, 9)], ['8'])).toEqual({})
+  })
+})
+
+describe('Board: Stift und Radierer', () => {
+  const at = (x: number, y: number) => ({ x, y })
+  it('Freihand-Strich: Zittern weg, wenige Punkte, Form und Enden bleiben', () => {
+    const shaky = Array.from({ length: 101 }, (_, i) => at(i, i % 2 ? 0.4 : -0.4))
+    expect(smoothStroke(shaky, 1)).toEqual([shaky[0], shaky[100]])
+    const circle = Array.from({ length: 361 }, (_, i) => at(50 * Math.cos((i * Math.PI) / 180), 50 * Math.sin((i * Math.PI) / 180)))
+    const out = smoothStroke(circle, 1)
+    expect(out.length).toBeGreaterThan(8)
+    expect(out.length).toBeLessThan(40)
+    expect([out[0], out.at(-1)]).toEqual([circle[0], circle[360]])
+    for (const p of out) expect(Math.abs(Math.hypot(p.x, p.y) - 50)).toBeLessThan(1)
+    expect(smoothStroke([at(1, 2)], 1)).toEqual([at(1, 2)])
+  })
+  it('Radierer: Linien, Positionen, Text, Zonen nur am Rand; schnelles Wischen trifft auch', () => {
+    const line = [at(0, 0), at(100, 0)], hit = (it: Parameters<typeof touches>[0], pts: { x: number; y: number }[], a: { x: number; y: number }, b = a) => touches(it, pts, a, b, 10, 1)
+    expect(hit({ kind: 'arrow' }, line, at(50, 11))).toBe(true) // Radius 10 + halbe Strichbreite 2
+    expect(hit({ kind: 'path' }, line, at(50, 13))).toBe(false)
+    expect(hit({ kind: 'path' }, line, at(50, -40), at(50, 40))).toBe(true) // Mausweg kreuzt die Linie
+    expect(hit({ kind: 'path' }, line, at(120, -40), at(120, 40))).toBe(false)
+    const sq = [at(0, 0), at(100, 0), at(100, 100), at(0, 100)]
+    expect(hit({ kind: 'zone' }, sq, at(50, 50))).toBe(false)
+    expect(hit({ kind: 'zone' }, sq, at(5, 50))).toBe(true) // Schlusskante zählt mit
+    expect(hit({ kind: 'pos' }, [at(0, 0)], at(17, 0))).toBe(true) // Radius 10 + Punkt 8
+    expect(hit({ kind: 'pos' }, [at(0, 0)], at(19, 0))).toBe(false)
+    expect(hit({ kind: 'text', label: 'Plant default' }, [at(100, 100)], at(150, 95))).toBe(true) // 13 Zeichen: ±58 px breit
+    expect(hit({ kind: 'text', label: 'Plant default' }, [at(100, 100)], at(100, 130))).toBe(false)
   })
 })

@@ -162,10 +162,10 @@
 .tm-label-input { width: 180px; padding: 5px 8px; }
 .tm-tools-hint { color: var(--u-muted); font-size: 12.5px; flex: 1; min-width: 140px; }
 .tm-tools-end { display: flex; gap: 4px; align-items: center; margin-left: auto; }
-.tm-it { pointer-events: none; }
-.tm-it.click { pointer-events: auto; cursor: pointer; }
-.tm-it.click:hover { opacity: .55; }
-.tm-hit { fill: transparent; stroke: transparent; pointer-events: all; }
+/* Stift/Radierer: Fläche über der Karte fängt das Ziehen ab; Radierer-Kreis = Trefferradius (10 px, Board.tsx) */
+.tm-draw { fill: transparent; pointer-events: all; }
+.tm-draw.pen { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M4 20l4-1 11-11-3-3L5 16z' fill='%23fff' stroke='%23111' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 4 20, crosshair; }
+.tm-draw.erase { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23fff' fill-opacity='.15' stroke='%23111' stroke-width='3'/%3E%3Ccircle cx='12' cy='12' r='10' fill='none' stroke='%23fff' stroke-width='1.5'/%3E%3C/svg%3E") 12 12, cell; }
 .tm-line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .tm-zone { fill-opacity: .16; }
 .tm-pos { stroke: #0c0c0e; }

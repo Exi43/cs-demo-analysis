@@ -17,7 +17,6 @@ const MOVE = 40, RUN = 150
 export const SIMILAR_U = 64
 
 const LABEL: Record<NadeType, string> = { smoke: 'Smoke', flash: 'Flash', molotov: 'Molotov', he: 'HE', decoy: 'Decoy' }
-const CLICK: Record<string, string> = { left: 'left click', right: 'right click', both: 'left + right click' }
 
 /**
  * Wurftechnik von Spur k in Runde r beim Wurf (tick): Bewegung stand | walk | run (Tempo am Wurf), crouch (geduckt), jump (in der Luft
@@ -38,13 +37,6 @@ export function techniqueAt(d: CS3D, r: number, k: number, tick: number, launch?
   if (jump) out.push('jump')
   if (launch !== undefined) out.push(clickOf(launch))
   return out
-}
-
-/** eine Zeile Anleitung zur Technik, z. B. „Run, jump and throw with left click“ */
-export function techniqueStep(tech: readonly string[]): string {
-  const verbs = ['walk', 'run', 'crouch', 'jump'].filter(t => tech.includes(t)), click = tech.find(t => CLICK[t])
-  const s = [...verbs, 'throw'].join(', ').replace(/, (?=[^,]*$)/, ' and ') + (click ? ` with ${CLICK[click]}` : '')
-  return s[0].toUpperCase() + s.slice(1)
 }
 
 /**
@@ -73,7 +65,7 @@ export function lineupFromThrow(d: CS3D, i: number, matchId: string, side: 'T' |
       map: H.map, type, side, title: `${LABEL[type]}${place ? ` from ${place}` : ''}`,
       stand: { x: r1(s.x), y: r1(s.y), z: r1(z) }, target: { x: r1(N.x[i]), y: r1(N.y[i]), z: r1(N.z[i]) },
       aim: { pitch: r2(s.pitch), yaw: r2(((s.yaw % 360) + 540) % 360 - 180) },
-      technique, steps: [techniqueStep(technique)], images: [], tags: [],
+      technique, steps: [], images: [], tags: [],
       demo: { matchId, tick, steamid, player: name, round },
     },
   }

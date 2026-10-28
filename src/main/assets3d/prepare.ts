@@ -18,7 +18,8 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  PIPELINE_VERSION, assetUrl, type AgentAssets, type AssetProfile, type Assets3D, type EconAssets, type MapAssetManifest, type PrepareProgress, type SkinAssets, type SoundMap, type WeaponAssets,
+  PIPELINE_VERSION, assetUrl, type AgentAssets, type AssetProfile, type Assets3D, type EconAssets, type MapAssetManifest, type PrepareProgress, type PreviewAssets, type SkinAssets,
+  type SoundMap, type WeaponAssets,
 } from '../../shared/assets3d.ts'
 import { AGENT_DEFAULT } from '../../shared/cs3d.ts'
 import { VRF_VERSION, ensureVrf, fileKey, findCS2, lanes, vrf, vrfIdle, writeAtomic } from './cs2.ts'
@@ -44,19 +45,22 @@ export interface PrepareOpts {
   /** Aufkleber-/Anhänger-IDs und Waffen-defs mit Aufklebern (header.skins); fehlt → ohne */
   econ?: { stickers: number[]; charms: number[]; defs: number[] }
   profile: AssetProfile
-  /** nur die Map (Utility-Vorschau eines Lineups ohne Demo): Agenten, Waffen, Skins und Sounds braucht nur ein Match */
-  mapOnly?: boolean
+  /**
+   * Utility-Vorschau eines Lineups ohne Demo: Map + Vorschau-Kit = Standard-Agenten T/CT (Modell, Clips, Ego-Arme) und weapons (die
+   * Granaten) mit Ego- und Welt-Clips; ohne C4, Skins, Aufkleber und Sounds. Das Kit ist optional: Fehler darin → nur die Map
+   */
+  preview?: boolean
 }
 
-/** Granaten (Projektil = gleiches Modell) und C4 sind immer dabei */
+/** Granaten (Projektil = gleiches Modell) und C4 sind immer dabei (nicht in der Vorschau) */
 const ALWAYS_WEAPONS = [43, 44, 45, 46, 47, 48, 49]
 const STAGES: Record<PrepareProgress['stage'], [number, number]> = {
   locate: [0, 2], vrf: [2, 8], map: [8, 70], agents: [70, 84], weapons: [84, 91], skins: [91, 96], sounds: [96, 99], done: [100, 100],
 }
 
-export function prepare3d(o: PrepareOpts & { mapOnly: true }, onProgress: (p: PrepareProgress) => void): Promise<Pick<Assets3D, 'map'>>
+export function prepare3d(o: PrepareOpts & { preview: true }, onProgress: (p: PrepareProgress) => void): Promise<PreviewAssets>
 export function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress) => void): Promise<Assets3D>
-export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress) => void): Promise<Pick<Assets3D, 'map'> | Assets3D> {
+export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress) => void): Promise<PreviewAssets | Assets3D> {
   if (!/^[a-z0-9_]+$/.test(o.map)) throw new Error(`Invalid map name: ${o.map}`)
   // nach der Map laufen die Stufen im Vordergrund gleichzeitig (lane): Balken = Ende der Map + Summe der Stufenstände (nacheinander wie früher)
   const after = new Map<PrepareProgress['stage'], number>()
@@ -112,6 +116,14 @@ export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress)
   // unabhängiger Teil nach der Map (lane, cs2.ts); alle laufen zu Ende, bevor tmp gelöscht wird. Dauer (ab Start der Teile) → build.log
   const lane = lanes(), started: Promise<unknown>[] = [], spans: [string, number][] = []
   const part = <T>(name: string, f: () => Promise<T>) => { const p = lane(() => timed(name, f, spans)); started.push(p); return p }
+  const logTimes = () => {
+    const lines = [
+      built.length && `[prepare3d] new parts: ${built.map(([n, s]) => `${n} ${s.toFixed(1)} s`).join(', ')}; total ${built.reduce((a, [, s]) => a + s, 0).toFixed(1)} s`,
+      spans.some(([, s]) => s >= 1) && `[prepare3d] parts: ${spans.map(([n, s]) => `${n} ${s.toFixed(1)} s`).join(', ')}; build ${((Date.now() - t0) / 1000).toFixed(1)} s`,
+    ].filter(Boolean)
+    for (const line of lines) { appendFileSync(log, line + '\n'); console.log(line) }
+  }
+  let map: MapAssetManifest | undefined
 
   try {
     // ---- Map
@@ -130,13 +142,12 @@ export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress)
       writeAtomic(mapJson, JSON.stringify(mb))
     }
     report('map', 1, 'Map ready')
-    const map: MapAssetManifest = {
+    map = {
       map: o.map, profile: o.profile, glb: url(`${mapRel}/${mb.glb}`), lightmap: url(`${mapRel}/${mb.lightmap}`),
       sky: mb.sky && url(`${mapRel}/${mb.sky}`), skyHdr: mb.skyHdr && url(`${mapRel}/${mb.skyHdr}`), lut: mb.lut && url(`${mapRel}/${mb.lut}`),
       skybox: mb.skybox && { ...mb.skybox, glb: url(`${mapRel}/${mb.skybox.glb}`), ...mb.skybox.lightmap && { lightmap: url(`${mapRel}/${mb.skybox.lightmap}`) } },
       floor: url(`${mapRel}/${mb.floor}`), probes: url(`${mapRel}/${mb.probes}`), settings: mb.settings,
     }
-    if (o.mapOnly) { report('done', 1, 'Ready'); return { map } }
 
     // ---- Def-Tabellen
     // ':3' = mit gloves/kits/kit.guns (ältere items.json neu parsen)
@@ -157,7 +168,7 @@ export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress)
     // roots2 = mit tracer (weapons.vdata); roots.json davor bleibt liegen
     const wDir = join(P, 'weapons'), rootsFile = join(wDir, 'roots2.json')
     mkdirSync(wDir, { recursive: true })
-    const defs = [...new Set([...o.weapons, ...ALWAYS_WEAPONS])].filter(d => items.weapons[d])
+    const defs = [...new Set([...o.weapons, ...o.preview ? [] : ALWAYS_WEAPONS])].filter(d => items.weapons[d])
     const wModels = [...new Set(defs.map(d => items.weapons[d].model))]
     const roots: Record<string, WeaponModel> = readJson(rootsFile) ?? {}
     const noRoot = wModels.filter(m => !roots[m])
@@ -280,12 +291,13 @@ export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress)
       }
     } catch (e) { console.warn('stickers/charms skipped:', e) } })
 
-    // ---- Sounds
+    // ---- Sounds (die Vorschau spielt keinen Ton)
     const sDir = join(P, 'sounds'), smFile = join(sDir, 'sound_map.json')
-    const soundsP = part('sounds', async (): Promise<SoundMap> => readJson(smFile) ?? buildSounds(ctx('sounds'), sDir, work('sounds')))
+    const soundsP = o.preview ? null : part('sounds', async (): Promise<SoundMap> => readJson(smFile) ?? buildSounds(ctx('sounds'), sDir, work('sounds')))
 
     const [agents, weapons, soundMap, econ] = await Promise.all([agentsP, weaponsP, soundsP, econP])
     await Promise.all(started) // Ego-Sicht/Welt-Clips ergänzen weapons/agents, Skins liegen danach auf der Platte
+    if (!soundMap) { logTimes(); report('done', 1, 'Ready'); return { map, agents, weapons } } // Vorschau-Kit
     for (const s of gPaints) if (existsSync(join(gDir, weaponFile(items.gloves[s.def])))) gloves[s.def] = url(`gloves/${weaponFile(items.gloves[s.def])}`)
     // Pfade 'skins/tex/…' → URL; fehlende/kaputte JSONs → null
     const load = (f: string) => { try { return JSON.parse(readFileSync(f, 'utf8'), (_k, v) => typeof v === 'string' && v.startsWith('skins/') ? url(v) : v) } catch { return null } }
@@ -310,16 +322,17 @@ export async function prepare3d(o: PrepareOpts, onProgress: (p: PrepareProgress)
       Object.assign(soundMap.map, s2.map)
     } catch (e) { console.warn('clip sounds skipped:', e) }
 
-    const lines = [
-      built.length && `[prepare3d] new parts: ${built.map(([n, s]) => `${n} ${s.toFixed(1)} s`).join(', ')}; total ${built.reduce((a, [, s]) => a + s, 0).toFixed(1)} s`,
-      spans.some(([, s]) => s >= 1) && `[prepare3d] parts: ${spans.map(([n, s]) => `${n} ${s.toFixed(1)} s`).join(', ')}; build ${((Date.now() - t0) / 1000).toFixed(1)} s`,
-    ].filter(Boolean)
-    for (const line of lines) { appendFileSync(log, line + '\n'); console.log(line) }
+    logTimes()
     report('done', 1, 'Ready')
     return {
       map, agents, weapons, gloves, skins, econ,
       sounds: { base: url('sounds/'), map: soundMap },
     }
+  } catch (e) {
+    if (!o.preview || !map) throw e
+    console.warn('preview kit skipped:', e) // Vorschau dann nur mit der Map (ohne Hände, Granate als Ersatzkörper)
+    report('done', 1, 'Ready')
+    return { map }
   } finally {
     // nach einem Fehler laufende Teile und Exporte (auch die 3D-Skybox) zu Ende, sonst schreibt VRF in das gelöschte tmp
     await Promise.allSettled(started); await vrfIdle()

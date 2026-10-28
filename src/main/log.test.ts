@@ -91,6 +91,10 @@ describe('log3d', () => {
     st('c', 'Starting', 100)
     st('c', 'Exporting map', 2000, 12)
     log3d({ id: 'c', state: 'error', pct: 0, msg: '3D asset builder crashed (code 1).' })
+    st('d', 'Starting', 5000) // angehalten (queued), später neu gestartet: Dauer ab dem Neustart
+    log3d({ id: 'd', state: 'queued', pct: 0, msg: 'Waiting' })
+    st('d', 'Starting', 800) // zweites „build start“ drosselt createLog (gleiche Zeile binnen einer Minute)
+    log3d({ id: 'd', state: 'ready', pct: 100, msg: 'Ready' })
     vi.useRealTimers()
     expect(lines(join(dir, 'app.log'))).toEqual([
       'INFO 3D replay opened: a',
@@ -102,6 +106,8 @@ describe('log3d', () => {
       'INFO 3D b: ready after 1.5 s (all cached)',
       'INFO 3D c: build start (background)',
       "ERROR 3D c: failed after 2.1 s at 'Exporting map' (12 %): 3D asset builder crashed (code 1).",
+      'INFO 3D d: build start (background)',
+      'INFO 3D d: ready after 0.8 s (all cached)',
     ])
   })
 })

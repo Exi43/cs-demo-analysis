@@ -1,5 +1,5 @@
-// Team-Seite: reine Logik ohne React (Rechte, Abstimmung, Unterschiede eines Änderungsvorschlags, Lern-Status, Win-Rate aus Demos)
-import { BUILTIN_ROLES, type Member, type Progress, type ProgressStatus, type Strat, type StratKind, type TeamState, type Vote } from '../../shared/team'
+// Team-Seite: reine Logik ohne React (Rechte, Abstimmung, Unterschiede eines Änderungsvorschlags, Lern-Status, Win-Rate aus Demos, Board-Geometrie)
+import { BUILTIN_ROLES, type BoardItem, type Member, type Progress, type ProgressStatus, type Strat, type StratKind, type TeamState, type Vote } from '../../shared/team'
 import type { MatchSummary } from '../../shared/model'
 
 export const KINDS: { id: StratKind; label: string }[] = [
@@ -104,4 +104,39 @@ export const uid = () => crypto.randomUUID()
 export const ago = (t: number, now = Date.now()) => {
   const d = Math.max(0, now - t) / 1000
   return d < 3600 ? `${Math.max(1, Math.round(d / 60))} min ago` : d < 86400 ? `${Math.round(d / 3600)} h ago` : `${Math.round(d / 86400)} d ago`
+}
+
+// Taktik-Board: Stift und Radierer (Punkte in Radar-Pixeln)
+type P = { x: number; y: number }
+const ptSeg = (p: P, a: P, b: P) => {
+  const dx = b.x - a.x, dy = b.y - a.y, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l)) : 0
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy)
+}
+const turn = (o: P, a: P, b: P) => Math.sign((a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x))
+/** kürzester Abstand der Strecken a–b und c–d (0, wenn sie sich kreuzen) */
+const segDist = (a: P, b: P, c: P, d: P) =>
+  turn(a, b, c) * turn(a, b, d) < 0 && turn(c, d, a) * turn(c, d, b) < 0 ? 0 : Math.min(ptSeg(a, c, d), ptSeg(b, c, d), ptSeg(c, a, b), ptSeg(d, a, b))
+
+/** Freihand-Strich: glätten (2× Mittel mit den Nachbarn, Enden bleiben), dann ausdünnen (Douglas-Peucker: weg, was < eps von der Linie abweicht) */
+export function smoothStroke(pts: P[], eps: number): P[] {
+  let p = pts
+  for (let k = 0; k < 2; k++) p = p.map((q, i) => (i && i < p.length - 1 ? { x: (p[i - 1].x + 2 * q.x + p[i + 1].x) / 4, y: (p[i - 1].y + 2 * q.y + p[i + 1].y) / 4 } : q))
+  const thin = (p: P[]): P[] => {
+    let far = 0, at = 0
+    for (let i = 1; i < p.length - 1; i++) { const d = ptSeg(p[i], p[0], p[p.length - 1]); if (d > far) { far = d; at = i } }
+    return far > eps ? [...thin(p.slice(0, at + 1)).slice(0, -1), ...thin(p.slice(at))] : p.length > 2 ? [p[0], p[p.length - 1]] : p
+  }
+  return thin(p)
+}
+
+/**
+ * Radierer: berührt der Mausweg a→b (Radius r) das Element? Mausweg statt Punkt, damit schnelles Wischen nichts überspringt.
+ * pts = Punkte des Elements; s = Marker-Skalierung des Radars (Größen wie in Board.tsx, Textbreite geschätzt mit 0,6 em je Zeichen).
+ * Zonen nur am Rand: Radieren darin löscht nicht die ganze Zone.
+ */
+export function touches(it: Pick<BoardItem, 'kind' | 'label'>, pts: P[], a: P, b: P, r: number, s: number) {
+  if (it.kind === 'pos') return ptSeg(pts[0], a, b) <= r + 8 * s
+  if (it.kind === 'text') { const f = 15 * s, w = (it.label?.length ?? 1) * f * 0.3, y = pts[0].y - f * 0.35; return segDist(a, b, { x: pts[0].x - w, y }, { x: pts[0].x + w, y }) <= r + f / 2 }
+  const line = it.kind === 'zone' ? [...pts, pts[0]] : pts
+  return line.some((p, i) => i > 0 && segDist(a, b, line[i - 1], p) <= r + 2 * s)
 }

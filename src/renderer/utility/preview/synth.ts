@@ -1,8 +1,9 @@
 // Utility-Vorschau ohne Demo (Variante b): aus einem Lineup ein kurzes künstliches CS3D-„Demo“, das die 3D-Engine wie eine echte Demo
-// abspielt: ein Spieler ohne Modell (Ego-Sicht) auf der Standposition mit dem Blick des Lineups, die Wurftechnik als Tasten-Kanal (gleiche
-// Tasten-Anzeige wie bei Demos) und eine Granate auf einer angenäherten Flugbahn bis zum Ziel. Rein (ohne three/DOM), Test: synth.test.ts.
+// abspielt: ein Spieler (Standard-Agent seiner Seite, Ego-Sicht) auf der Standposition mit dem Blick des Lineups, die Wurftechnik als
+// Tasten-Kanal (gleiche Tasten-Anzeige wie bei Demos), Granate ziehen → Pin → Wurf (weapon_fire beim Loslassen: Ego-Hände und
+// Agent werfen wie in Demos, actions.ts) und eine Granate auf einer angenäherten Flugbahn bis zum Ziel. Rein (ohne three/DOM), Test: synth.test.ts.
 // Wurfphysik wie CS (shared/utility-capture.ts), Sprung: 302 u/s Absprung, 800 u/s² (CS2-Spieler).
-import { BTN, NADE, decode3d, encode3d, FLAG, type ButtonName, type CS3D, type Nade3D, type Track3DIn } from '../../../shared/cs3d'
+import { AGENT_DEFAULT, BTN, EV, NADE, decode3d, encode3d, FLAG, type ButtonName, type CS3D, type Nade3D, type Track3DIn } from '../../../shared/cs3d'
 import type { FloorGrid } from '../../../shared/assets3d'
 import type { MatchData } from '../../../shared/model'
 import type { Lineup, Vec3 } from '../../../shared/utility'
@@ -15,12 +16,15 @@ const D2R = Math.PI / 180
 export const NADE_G = 320
 const JUMP_V = 302, PLAYER_G = 800, RUN_V = 245, WALK_V = 127, DUCK_V = 83
 /**
- * Zeitplan (s, auf 16-Hz-Frames): Pin ziehen, Ducken, Loslassen ohne / mit Anlauf, Anlauf, nach der Wirkung bis zum Ende. Die Granate
- * fliegt SPAWN nach dem Loslassen los (CS2-Wurfanimation; Ancient-Jumpthrow: Start-vz 710 u/s = Spieler 0,12 s nach dem Absprung)
+ * Zeitplan (s, auf 16-Hz-Frames): Granate ab dem 2. Frame in der Hand (Zieh-Clip 1 s), Pin ziehen (Clip ≤ 1,1 s), Ducken, Loslassen ohne /
+ * mit Anlauf, Anlauf, Hand nach dem Wurf-Clip leer (keine nächste Granate), nach der Wirkung bis zum Ende. Die Granate fliegt SPAWN nach
+ * dem Loslassen los (CS2-Wurfanimation; Ancient-Jumpthrow: Start-vz 710 u/s = Spieler 0,12 s nach dem Absprung)
  */
-const PIN = 0.5, DUCK = 0.25, REL = 1.25, REL_MOVE = 1.75, RUNUP = 0.625, SPAWN = 0.125, TAIL = OUT_S
+const PIN = 1, DUCK = 0.25, REL = 2.125, REL_MOVE = 2.625, RUNUP = 0.625, SPAWN = 0.125, EMPTY = 0.75, TAIL = OUT_S
 const DEF: Record<Lineup['type'], number> = { smoke: 45, flash: 43, he: 44, molotov: 46, decoy: 47 }
 const TYPE: Record<Lineup['type'], number> = { smoke: NADE.smoke, flash: NADE.flash, he: NADE.he, molotov: NADE.molotov, decoy: NADE.decoy }
+/** Klassenname fürs weapon_fire-Ereignis je Def (Brandgranate 48) */
+const CLS: Record<number, string> = { 43: 'weapon_flashbang', 44: 'weapon_hegrenade', 45: 'weapon_smokegrenade', 46: 'weapon_molotov', 47: 'weapon_decoy', 48: 'weapon_incgrenade' }
 /** Wirkdauer (s) nach der Detonation: Smoke, Feuer, Decoy */
 const LASTS: Partial<Record<Lineup['type'], number>> = { smoke: 18, molotov: 7, decoy: 15 }
 export const SYNTH_ID = 'lineup-preview'
@@ -51,18 +55,31 @@ export const lookAt = (a: Vec3, b: Vec3) => ({ pitch: -Math.atan2(b.z - a.z, Mat
 /**
  * Angenäherte Flugbahn [tick, x, y, z] (32 Hz) von from bis zum Ziel: Steigung aus dem Blick (wie CS um bis zu 10° angehoben) bzw. ohne
  * Blick der flache Wurf, der das Ziel mit voller Stärke erreicht (sonst 45°); Startgeschwindigkeit THROW_SPEED · (0,3 + 0,7 · Stärke) +
- * 1,25 · vz des Spielers, Schwerkraft NADE_G. Waagerecht gleichmäßig bis zum Ziel gestreckt (ohne Abpraller und Wände).
+ * 1,25 · Tempo des Spielers (vz senkrecht, vh waagerecht in Wurfrichtung), Schwerkraft NADE_G. Waagerecht gleichmäßig bis zum Ziel gestreckt
+ * (ohne Wände); liegt das Ziel deutlich vor der ballistischen Landung, prallte der echte Wurf ab (Wand, Decke): ballistisch bis zur
+ * Zielentfernung, dann fällt sie dort aufs Ziel. Gestaucht lag der Bogen in der Mitte weit über dem echten Wurf (durch Decken und Vorsprünge;
+ * gut ein Viertel der Startpaket-Lineups, vor allem Molotovs)
  */
-export function approxPath(from: Vec3, target: Vec3, t0: number, aim: { pitch: number } | undefined, strength: number, vz = 0): [number, number, number, number][] {
+export function approxPath(from: Vec3, target: Vec3, t0: number, aim: { pitch: number } | undefined, strength: number, vz = 0, vh = 0): [number, number, number, number][] {
   const D = Math.hypot(target.x - from.x, target.y - from.y), h = target.z - from.z, v = THROW_SPEED * (0.3 + 0.7 * strength)
   let elev: number
   if (aim) elev = -(aim.pitch - ((90 - Math.abs(aim.pitch)) * 10) / 90) * D2R
   else { const q = v ** 4 - NADE_G * (NADE_G * D * D + 2 * h * v * v); elev = q >= 0 && D > 1 ? Math.atan((v * v - Math.sqrt(q)) / (NADE_G * D)) : Math.PI / 4 }
   const vz0 = v * Math.sin(elev) + THROW_INHERIT * vz, hs = Math.max(50, v * Math.cos(elev))
   // Flugzeit: absteigender Ast bei Zielhöhe; zu hoch/zu flach → Zeit aus dem waagerechten Tempo, Höhe linear auf das Ziel gezogen
-  const disc = vz0 * vz0 - 2 * NADE_G * h
+  const disc = vz0 * vz0 - 2 * NADE_G * h, out: [number, number, number, number][] = []
+  const zAt = (t: number) => from.z + vz0 * t - (NADE_G * t * t) / 2, hv = hs + THROW_INHERIT * vh, t1 = D / hv
+  if (aim && disc >= 0 && (hv * (vz0 + Math.sqrt(disc))) / NADE_G * 0.8 > D && zAt(t1) > target.z) {
+    const z1 = zAt(t1), vz1 = Math.min(0, vz0 - NADE_G * t1) // Abprall nimmt das Steigen mit
+    const n = Math.max(8, Math.ceil(32 * Math.min(6, t1 + (vz1 + Math.sqrt(vz1 * vz1 + 2 * NADE_G * (z1 - target.z))) / NADE_G)))
+    for (let i = 0; i <= n; i++) {
+      const t = i / 32, f = Math.min(1, t / t1), s = t - t1
+      out.push([Math.round(t0 + t * RATE), from.x + (target.x - from.x) * f, from.y + (target.y - from.y) * f, i === n ? target.z : s <= 0 ? zAt(t) : Math.max(target.z, z1 + vz1 * s - (NADE_G * s * s) / 2)])
+    }
+    return out
+  }
   const n = Math.max(8, Math.ceil(32 * Math.min(6, disc >= 0 ? (vz0 + Math.sqrt(disc)) / NADE_G : D / hs))), T = n / 32 // auf 32-Hz-Punkte (2 Ticks)
-  const zEnd = from.z + vz0 * T - (NADE_G * T * T) / 2, out: [number, number, number, number][] = []
+  const zEnd = from.z + vz0 * T - (NADE_G * T * T) / 2
   for (let i = 0; i <= n; i++) {
     const f = i / n, t = f * T
     out.push([Math.round(t0 + t * RATE), from.x + (target.x - from.x) * f, from.y + (target.y - from.y) * f, from.z + vz0 * t - (NADE_G * t * t) / 2 + (target.z - zEnd) * f])
@@ -100,12 +117,13 @@ export function synthLineup(l: Lineup, g: FloorGrid | null): Synth {
   const eye = { x: l.stand.x, y: l.stand.y, z: z0 + hop(spawn) + 64 - 18 * duckAt(spawn) }, d0 = dir(aim.pitch, aim.yaw)
   const start = { x: eye.x + 16 * d0.x, y: eye.y + 16 * d0.y, z: eye.z + 16 * d0.z }
   const first = 1000, throwTick = first + Math.round(spawn * RATE)
-  const path = approxPath(start, target, throwTick, l.aim, strength, jump ? JUMP_V - PLAYER_G * SPAWN : 0)
+  const path = approxPath(start, target, throwTick, l.aim, strength, jump ? JUMP_V - PLAYER_G * SPAWN : 0, speed)
   // Wirkung bei der Landung (ohne Rollen), Smoke/Feuer/Decoy bleiben LASTS stehen; die Vorschau endet TAIL danach (Außenansicht)
   const det = path[path.length - 1][0], end = det + Math.round((LASTS[l.type] ?? 0) * RATE)
   const nFrames = Math.ceil((det + TAIL * RATE - first) / STEP) + 1
   const T: Track3DIn = { player: 0, x: [], y: [], z: [], duck: [], btnLo: [], btnHi: [], flags: [], weapon: [], fov: [], ammo: [], skin: [], pitch: [], yaw: [], aimP: [], aimY: [], viewP: [], viewY: [] }
   const bits = (names: ButtonName[]) => names.reduce((b, n) => (b | (1 << BTN[n])) >>> 0, 0)
+  const inc = l.type === 'molotov' && l.side === 'CT', def = inc ? 48 : DEF[l.type]
   for (let i = 0; i < nFrames; i++) {
     const t = i / FPS, keys: ButtonName[] = [], o = off(t), up = hop(t)
     if (t >= PIN && t < rel) keys.push(...click)
@@ -115,16 +133,19 @@ export function synthLineup(l: Lineup, g: FloorGrid | null): Synth {
     T.x.push(l.stand.x + fwd.x * o); T.y.push(l.stand.y + fwd.y * o); T.z.push(z0 + up); T.duck.push(duckAt(t))
     T.btnLo.push(bits(keys)); T.btnHi.push(0)
     T.flags.push(FLAG.alive | (up > 0 ? FLAG.airborne : 0) | (keys.includes('WALK') ? FLAG.walking : 0))
-    T.weapon.push(l.type === 'molotov' && l.side === 'CT' ? 48 : DEF[l.type]); T.fov.push(0); T.ammo.push(1); T.skin.push(0)
+    T.weapon.push(i > 0 && t < rel + EMPTY ? def : 0); T.fov.push(0); T.ammo.push(1); T.skin.push(0)
   }
   for (let j = 0; j < 2 * nFrames - 1; j++) { T.pitch.push(aim.pitch); T.yaw.push(aim.yaw); T.aimP.push(0); T.aimY.push(0); T.viewP.push(0); T.viewY.push(0) }
   const nade: Nade3D = {
-    type: l.type === 'molotov' && l.side === 'CT' ? NADE.incgrenade : TYPE[l.type], player: 0, throwTick, detTick: det, endTick: Math.max(det, end),
+    type: inc ? NADE.incgrenade : TYPE[l.type], player: 0, throwTick, detTick: det, endTick: Math.max(det, end),
     x: target.x, y: target.y, z: target.z, path,
   }
+  // Agent beider Seiten = Standard-Agent der Lineup-Seite (die Engine nimmt ohne v1-Runde Seite T an): Modell und Ego-Arme passen
+  const agent = AGENT_DEFAULT[l.side === 'CT' ? 'CT' : 'T']
   const d = decode3d(encode3d({
-    matchId: SYNTH_ID, map: l.map, tickrate: RATE, skins: [], events: [], shots: [], voice: [], nades: [nade],
-    players: [{ steamid: SYNTH_ID, name: l.title, team: '', agent: { T: 0, CT: 0 } }],
+    matchId: SYNTH_ID, map: l.map, tickrate: RATE, skins: [], shots: [], voice: [], nades: [nade],
+    events: [{ tick: first + Math.round(rel * RATE), type: EV.weapon_fire, player: 0, arg: CLS[def] }], // Wurf beim Loslassen
+    players: [{ steamid: SYNTH_ID, name: l.title, team: '', agent: { T: agent, CT: agent } }],
     rounds: [{ num: 1, firstTick: first, nFrames, tracks: [T] }],
   }))
   const match: MatchData = { version: 1, id: SYNTH_ID, fileName: '', map: l.map, parsedAt: '', tickrate: RATE, serverName: '', players: [], teams: [], finalScore: {}, rounds: [] }

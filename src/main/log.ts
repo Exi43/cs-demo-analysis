@@ -165,11 +165,11 @@ export async function logImport(file: string, run: () => Promise<MatchSummary>) 
 // 3D-Asset-Bau je Match (Status aus assets3d/index.ts): Start, Schritte ab 1 s Dauer, Ende mit Gesamtdauer bzw. Fehler mit letztem Schritt
 const builds = new Map<string, { t0: number; step: string; ts: number; pct: number; first: boolean; work: boolean }>()
 const ready = new Set<string>(), views = new Set<string>()
-/** 3D-Replay geöffnet (IPC assets3d:prepare) = Bau im Vordergrund; schon fertig = Assets aus dem Speicher (Cache-Treffer) */
-export function log3dView(id: string) {
+/** 3D-Replay bzw. Lineup-Vorschau geöffnet (IPC assets3d:prepare/prepareMap) = Bau im Vordergrund; schon fertig = Assets aus dem Speicher (Cache-Treffer) */
+export function log3dView(id: string, what = '3D replay') {
   const hit = ready.has(id) && !builds.has(id)
   if (!hit) views.add(id)
-  log.info(`3D replay opened: ${id}${hit ? ' (assets cached)' : ''}`)
+  log.info(`${what} opened: ${id}${hit ? ' (assets cached)' : ''}`)
 }
 export function log3d(s: Prepare3DStatus) {
   const t = Date.now(), b = builds.get(s.id)
@@ -184,7 +184,8 @@ export function log3d(s: Prepare3DStatus) {
       Object.assign(b, { step: s.msg, ts: t, first: false })
     }
     b.pct = s.pct
-  } else if (s.state === 'ready' || s.state === 'error') {
+  } else if (s.state === 'queued') builds.delete(s.id) // angehalten (Spiel, Vorschau wartet auf anderes): Neustart zählt neu
+  else if (s.state === 'ready' || s.state === 'error') {
     builds.delete(s.id); views.delete(s.id)
     const took = sec(t - (b?.t0 ?? t))
     if (s.state === 'ready') { ready.add(s.id); log.info(`3D ${s.id}: ready after ${took}${b?.work ? '' : ' (all cached)'}`) }
