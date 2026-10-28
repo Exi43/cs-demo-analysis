@@ -8,6 +8,8 @@ export default defineConfig({
       // three mitbündeln: electron-builder lässt node_modules/*/examples weg (EXRLoader fehlte im Installer, 3D-Bau stürzte ab)
       externalizeDeps: { exclude: ['three'] },
       rollupOptions: {
+        // import() → require(): sharp lädt erst bei Bedarf (utility.ts), wie ein statisches Paket aus app.asar
+        output: { dynamicImportInCjs: false },
         input: {
           index: resolve('src/main/index.ts'),
           parser: resolve('src/main/parser-process.ts'),

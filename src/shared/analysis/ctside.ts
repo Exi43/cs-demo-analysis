@@ -32,7 +32,7 @@ export function openingLine(entries: Entry[], side: Side): Line | undefined {
   return {
     icon: 'target', text: `Opening duel won ${win.length}/${win.length + loss.length} → round won ${a}/${win.length}. Opening lost → **${b}/${loss.length}**`,
     refs: loss.map(x => x.ref),
-    ...(key && { tag: tagOf(loss.length - b, loss.length), stat: { won: b, total: loss.length }, counter: `Win the first duel: after losing it they won ${b}/${loss.length}.` }),
+    ...(key && { tag: tagOf(loss.length - b, loss.length), stat: { won: b, total: loss.length }, counter: `Win the first duel on their ${side}: after losing it they won ${b}/${loss.length}.` }),
   }
 }
 

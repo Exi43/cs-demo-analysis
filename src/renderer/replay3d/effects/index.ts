@@ -22,6 +22,8 @@ const D2R = Math.PI / 180
 const TRACER_SPEED = 20500, TRACER_LEN = 1200, TRACER_GROW = 0.08 // u/s, u, s
 const HE_LIGHT_S = 0.225, HE_LIGHT_R = 160 // s, u (explosion_hegrenade_light.vpcf)
 const FLASH_S = 0.25, FLASH_R = 256 // s, u Sprite-Radius (explosion_flashbang.vpcf, Farbe 255/215/197)
+/** Ego-Blendung höchstens [Weiß, Nachbild] deckend, zusammen ≈ 43 % (Berat 28.10.: Geschehen bleibt sichtbar, Dauer/Stärke zeigt hud/FlashIndicator) */
+const FLASH_MAX = [0.35, 0.12] as const
 const C4_DEF = 49
 const NADE_DEF = [45, 43, 44, 46, 48, 47] // NADE-Typ (smoke, flash, he, molotov, incgrenade, decoy) → item_def_idx
 const NADE_POOL = 4 // Granaten je Typ gleichzeitig im Flug als Modell, weitere als Drehkörper
@@ -431,9 +433,9 @@ export const createEffects: CreateEffects = ctx => {
       ov.color.set(g, g, g, s); ov.mesh.visible = s > 0.002
       flashFresh = false
       if (flash <= 0) { flashEv = -1; flashTex = null; flashAsk = 0 } else if (flashAsk > 0) { flashAsk--; flashTex = ctx.captureFrame!(); if (flashTex) flashAsk = 0; flashFresh = true }
-      // Nachbild klingt langsamer ab als das Weiß (Annahme: Kurven stehen im Spielcode, nicht in Dateien)
-      const shotA = flashTex && !flashFresh ? Math.sqrt(flash) : 0
-      fl.color.set(1, 1, 1, flashFresh ? 0 : flash); fl.tex.value = flashTex; fl.shot.value = shotA
+      // Nachbild klingt langsamer ab als das Weiß (Annahme: Kurven stehen im Spielcode, nicht in Dateien). Beides gekappt (FLASH_MAX)
+      const shotA = flashTex && !flashFresh ? FLASH_MAX[1] * Math.sqrt(flash) : 0
+      fl.color.set(1, 1, 1, flashFresh ? 0 : FLASH_MAX[0] * flash); fl.tex.value = flashTex; fl.shot.value = shotA
       post.visible = !flashFresh && (flash > 0.002 || shotA > 0.002)
       if (c4m) c4m.visible = c4vis
       if (c4emit) c4emit.emissive.setRGB(c4on ? 6 : 0, c4on ? 0.3 : 0, c4on ? 0.2 : 0)

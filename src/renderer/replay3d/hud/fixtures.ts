@@ -129,7 +129,7 @@ const START: HudView = {
   ],
   panel: {"steamid":"76561199217769102","hp":100,"hpLost":0,"mag":null,"reserve":null,"weapon":"Talon Knife","buy":true,"money":50,"voice":false},
   killfeed: [],
-  focus: {"steamid":"76561199217769102","keys":["MOVERIGHT"],"scoped":false,"fov":90,"flash":0},
+  focus: {"steamid":"76561199217769102","keys":["MOVERIGHT"],"scoped":false,"fov":90,"flash":0,"flashLeft":0},
 }
 
 const SCHADEN: HudView = {
@@ -155,7 +155,7 @@ const SCHADEN: HudView = {
   ],
   panel: {"steamid":"76561199217769102","hp":66,"hpLost":34,"mag":11,"reserve":null,"weapon":"USP-S","buy":false,"money":350,"voice":false},
   killfeed: [],
-  focus: {"steamid":"76561199217769102","keys":["MOVERIGHT","ATTACK"],"scoped":false,"fov":90,"flash":0},
+  focus: {"steamid":"76561199217769102","keys":["MOVERIGHT","ATTACK"],"scoped":false,"fov":90,"flash":0,"flashLeft":0},
 }
 
 const NORMAL: HudView = {
@@ -184,7 +184,7 @@ const NORMAL: HudView = {
     {"tick":114905,"attacker":"DiiiDiii","attackerSide":"T","victim":"Kugel666","victimSide":"CT","assister":"Criminal_Boy","assisterSide":"T","flashAssist":false,"weapon":"ak47","hs":true,"wallbang":false,"smoke":false,"blind":false,"noscope":false,"ago":3.6,"own":false},
     {"tick":115071,"attacker":"DiiiDiii","attackerSide":"T","victim":"SymboIe","victimSide":"CT","flashAssist":false,"weapon":"ak47","hs":true,"wallbang":false,"smoke":false,"blind":false,"noscope":false,"ago":1,"own":false},
   ],
-  focus: {"steamid":"76561199217769102","keys":["JUMP","MOVELEFT"],"scoped":false,"fov":90,"flash":0},
+  focus: {"steamid":"76561199217769102","keys":["JUMP","MOVELEFT"],"scoped":false,"fov":90,"flash":0,"flashLeft":0},
 }
 
 const DEFUSE: HudView = {
@@ -211,7 +211,7 @@ const DEFUSE: HudView = {
   ],
   panel: {"steamid":"76561199217769102","hp":38,"hpLost":0,"mag":null,"reserve":null,"weapon":"Talon Knife","buy":false,"money":950,"voice":false},
   killfeed: [],
-  focus: {"steamid":"76561199217769102","keys":["USE"],"scoped":false,"fov":90,"flash":0},
+  focus: {"steamid":"76561199217769102","keys":["USE"],"scoped":false,"fov":90,"flash":0,"flashLeft":0},
 }
 
 const fx = (name: FixtureName, label: string, view: HudView, menu = false, keys = false): HudFixture =>

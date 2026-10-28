@@ -9,19 +9,30 @@ import { MultiRoundView } from './replay/MultiRoundView'
 import { ReportView } from './views/ReportView'
 import { mapLabel } from './format'
 import { Icon } from './icons'
+import { setWindowShown } from './replay3d/frameloop'
+import { LogButtons } from './LogButtons'
 
 // 3D-Replay erst beim Öffnen laden (three, Engine und Audio holt die View danach selbst per import())
 const Replay3DView = lazy(() => import('./replay3d/Replay3DView').then(m => ({ default: m.Replay3DView })))
 // Entwicklung: #hudpreview/<fixture> zeigt nur die Vorschau des Übertragungs-HUDs (Selbsttest CSDA_VIEW=hudpreview/normal)
 const HudPreview = lazy(() => import('./replay3d/hud/Preview').then(m => ({ default: m.HudPreview })))
 const PREVIEW = location.hash.startsWith('#hudpreview')
+// Utility-Dashboard (eigene Lineups, unabhängig von Demos); Selbsttest #utility/... (UtilityView.tsx)
+const UtilityView = lazy(() => import('./utility/UtilityView').then(m => ({ default: m.UtilityView })))
+const UTILITY_HASH = location.hash.startsWith('#utility') ? location.hash.slice(1) : undefined
+// Selbsttest: #lineup=<Lineup-JSON, URL-kodiert>[&at=<s>] zeigt nur die 3D-Vorschau des Lineups (CSDA_VIEW=lineup=…)
+const LineupPreview3D = lazy(() => import('./utility/preview/LineupPreview3D').then(m => ({ default: m.LineupPreview3D })))
+const LINEUP = location.hash.startsWith('#lineup=') ? JSON.parse(decodeURIComponent(location.hash.slice(8).split('&')[0])) : null
+// Team-Seite (Stratbook, Vorschläge, Notizen; unabhängig von Demos); Selbsttest #team/...;mock=admin|player|new (team/TeamView.tsx)
+const TeamView = lazy(() => import('./team/TeamView').then(m => ({ default: m.TeamView })))
+const TEAM_HASH = location.hash.startsWith('#team') ? location.hash.slice(1) : undefined
 
 const loadImg = (src?: string) => new Promise<HTMLImageElement | undefined>(res => {
   if (!src) return res(undefined)
   const i = new Image(); i.onload = () => res(i); i.onerror = () => res(undefined); i.src = src
 })
 
-type View = 'library' | 'report' | 'replay' | 'replay3d' | 'multi' | 'stats'
+type View = 'library' | 'utility' | 'team' | 'report' | 'replay' | 'replay3d' | 'multi' | 'stats'
 export interface Jump { round: number; tick: number; n: number }
 
 const NAV: [View, string, string][] = [
@@ -29,6 +40,7 @@ const NAV: [View, string, string][] = [
 ]
 
 export function App() {
+  if (LINEUP) return <Suspense fallback={null}><LineupPreview3D lineup={LINEUP} onClose={() => {}} /></Suspense>
   return PREVIEW ? <Suspense fallback={null}><HudPreview /></Suspense> : <MainApp />
 }
 
@@ -37,7 +49,7 @@ function MainApp() {
   const [matches, setMatches] = useState<MatchData[]>([])
   const [cur, setCur] = useState(0)
   const [map, setMap] = useState<{ meta: MapMeta; img?: HTMLImageElement; lower?: HTMLImageElement }>()
-  const [view, setView] = useState<View>('library')
+  const [view, setView] = useState<View>(UTILITY_HASH ? 'utility' : TEAM_HASH ? 'team' : 'library')
   const [jump, setJump] = useState<Jump>()
   // Sprünge aus der Analyse öffnen das zuletzt benutzte Replay (2D oder 3D)
   const [replayKind, setReplayKind] = useState<'replay' | 'replay3d'>('replay')
@@ -51,6 +63,9 @@ function MainApp() {
     const offO = api.onOpened(id => { setImporting(null); setOpenIds([id]); setView('report') }, msg => { setImporting(null); setError(msg) })
     return () => { offP(); offO() }
   }, [])
+  useEffect(() => api.onWindowShown(setWindowShown), []) // minimiert: Bildtakt der Replays anhalten
+  // andere Seiten wechseln die Ansicht per Ereignis 'csda:view' (Utility-Kopfzeile → Team-Seite)
+  useEffect(() => { const h = (e: Event) => setView((e as CustomEvent<View>).detail); addEventListener('csda:view', h); return () => removeEventListener('csda:view', h) }, [])
 
   // Selbsttest: #auto/<view>/... öffnet das neueste Match
   useEffect(() => {
@@ -80,12 +95,16 @@ function MainApp() {
   }
   const open = (ids: string[]) => { setOpenIds(ids); setView('report') }
   const go = (v: View) => { setView(v); if (v === 'replay' || v === 'replay3d') setReplayKind(v) }
+  // Team-Lesezeichen: lokale Demo an Runde/Tick im 2D- oder 3D-Replay öffnen
+  const openDemo = (id: string, round: number, tick: number, kind: 'replay' | 'replay3d') => { setOpenIds([id]); go(kind); setJump({ round, tick, n: Date.now() }) }
 
   return (
     <div className="app">
       <aside className="sidebar">
         <div className="brand">CS<span>Demo</span>Analysis</div>
         <button className={`nav ${view === 'library' ? 'on' : ''}`} onClick={() => setView('library')}><Icon name="library" /> Demos</button>
+        <button className={`nav ${view === 'utility' ? 'on' : ''}`} onClick={() => setView('utility')}><Icon name="nade" /> Utility</button>
+        <button className={`nav ${view === 'team' ? 'on' : ''}`} onClick={() => setView('team')}><Icon name="team" /> Team</button>
         {openIds.length > 0 && (
           <>
             <div className="nav-sep" />
@@ -109,6 +128,7 @@ function MainApp() {
             ))}
           </>
         )}
+        <LogButtons />
       </aside>
       <main>
         {importing && view !== 'library' && (
@@ -119,7 +139,9 @@ function MainApp() {
         )}
         {error && <div className="error">{error}</div>}
         {view === 'library' && <Library onOpen={id => open([id])} onAnalyze={open} />}
-        {view !== 'library' && !match && !error && <div className="center muted pad">Loading {openIds.length > 1 ? `${openIds.length} demos` : 'match'}…</div>}
+        {view === 'utility' && <Suspense fallback={<div className="center muted pad">Loading utility…</div>}><UtilityView hash={UTILITY_HASH} /></Suspense>}
+        {view === 'team' && <Suspense fallback={<div className="center muted pad">Loading team…</div>}><TeamView hash={TEAM_HASH} onOpenDemo={openDemo} /></Suspense>}
+        {view !== 'library' && view !== 'utility' && view !== 'team' && !match && !error &&<div className="center muted pad">Loading {openIds.length > 1 ? `${openIds.length} demos` : 'match'}…</div>}
         {match && map && view === 'report' && <ReportView matches={matches} onRef={openRef} />}
         {match && map && view === 'replay' && <ReplayView key={match.id} match={match} map={map.meta} img={map.img} lowerImg={map.lower} jump={jump} />}
         {match && map && view === 'replay3d' && (

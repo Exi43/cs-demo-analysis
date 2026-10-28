@@ -64,13 +64,15 @@ export async function createAudio(
 
   const stopAll = () => { voice.stopAll(); sfx?.stopAll() }
   // kein update() seit 300 ms (Pause, Fenster versteckt, Replay hängt) bzw. Fenster minimiert/verdeckt → stumm und Audio-Thread anhalten
-  // (spart CPU); das nächste update() beim Abspielen weckt ihn wieder
-  let last = 0
+  // (spart CPU); das nächste update() beim Abspielen weckt ihn wieder. Der Wächter-Timer läuft nur, solange der Ton nicht ruht.
+  let last = 0, watchdog = 0
+  const watch = () => { watchdog ||= window.setInterval(() => { if (document.hidden || performance.now() - last > 300) idle() }, 100) }
   const idle = () => {
+    clearInterval(watchdog); watchdog = 0
     if (clock.anchor) { clock.anchor = null; stopAll() }
     if (ctx.state === 'running') void ctx.suspend().catch(() => {})
   }
-  const watchdog = setInterval(() => { if (document.hidden || performance.now() - last > 300) idle() }, 100)
+  watch()
   const onVis = () => { if (document.hidden) idle() }
   document.addEventListener('visibilitychange', onVis)
 
@@ -79,6 +81,7 @@ export async function createAudio(
     update(s: PlayState, l?: Listener) {
       last = performance.now()
       if (document.hidden) return idle()
+      watch()
       if (s.playing && ctx.state === 'suspended') void ctx.resume()
       const fresh = clock.sync(s), demo = s.tick / rate
       if (fresh || !clock.anchor) stopAll()

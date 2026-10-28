@@ -64,8 +64,8 @@ export interface KillView {
   own: boolean
 }
 
-/** Fokus-Spieler: Tasten aus btnLo/btnHi bzw. Events (für InputsOverlay, nur bei showKeys), Scope, FOV, Blendung */
-export interface HudFocus { steamid: string; keys: ButtonName[]; scoped: boolean; fov: number; flash: number }
+/** Fokus-Spieler: Tasten aus btnLo/btnHi bzw. Events (für InputsOverlay, nur bei showKeys), Scope, FOV, Blendung (Stärke 0..1, Rest in s) */
+export interface HudFocus { steamid: string; keys: ButtonName[]; scoped: boolean; fov: number; flash: number; flashLeft: number }
 
 export interface HudView {
   tick: number
@@ -89,6 +89,8 @@ export interface HudView {
   /** neueste zuletzt */
   killfeed: KillView[]
   focus?: HudFocus
+  /** wer gerade spricht, in Sprech-Reihenfolge (zuerst angefangen zuerst); place = Ort wie CS2 ihn zeigt ('T Start'), '' = keiner */
+  voice?: (HudPlayerView & { place: string })[]
 }
 
 /** Ereignis-Icon auf der Zeitleiste der Demo-Leiste; kill/death aus Sicht des Fokus-Spielers */

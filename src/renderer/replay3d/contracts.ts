@@ -8,7 +8,7 @@
 //   4. Bildtakt (frameloop.ts) im View (besitzt die Uhr: Play/Pause/Tempo/Sprung über das ganze Match):
 //        engine.setTime(tick) → audio.update({ tick, playing, speed, at }, engine.listener());
 //        HUD höchstens 15×/s: hudView(...) (hud/state.ts, Typen in hud/types.ts) → engine.setOverlay(Schilder)
-//      In der Pause nur zeichnen bei Sprung, Optionswechsel, Resize oder engine.dirty() (sonst kaum CPU-Last).
+//      In der Pause nur zeichnen bei Sprung, Optionswechsel, Resize oder engine.dirty(), sonst schläft der Takt (engine.onDirty weckt ihn).
 //   5. Tab verlassen: audio.dispose(), engine.dispose() (gibt GPU-Speicher frei, entfernt Listener)
 //
 // OPTIONEN kommen aus options.ts (Store: getOptions/onOptions), Tastenbelegung aus hotkeys.ts. Es gibt KEINE setOptions-Methoden
@@ -71,6 +71,12 @@ export interface EngineStats {
 export interface LabelInfo { weapon: string; utility: string[]; bomb: boolean; defusing: boolean }
 /** labels: steamid → Schild (fehlt → Schild wie bisher nur mit Name/HP); icons: fertig dekodierte Bilder (HB iconBitmaps) */
 export interface OverlayState { labels: Record<string, LabelInfo>; icons?: Map<string, CanvasImageSource> }
+/** Utility-Vorschau: Flugbahn und Ziel (Boden) in Source-Units */
+export interface LineupMarks { path: [number, number, number][]; target: [number, number, number] }
+/** Utility-Vorschau: Kamera hinter Granate nade (Index in d.nade) bzw. fest auf pos mit Blick auf look (Source-Units) */
+export type LineupView = { nade: number } | { pos: [number, number, number]; look: [number, number, number] }
+  /** Kreisfahrt um center (Abstand dist, elev Grad über der Waagerechten, ab Winkel yaw0 Grad, eine Runde in turnS Sekunden Demo-Zeit ab Tick t0) */
+  | { orbit: { center: [number, number, number]; dist: number; elev: number; yaw0: number; turnS: number; t0: number } }
 
 export interface Engine {
   /** Szene auf Tick stellen (gebrochen erlaubt, Sprünge erlaubt), effects.update(tick), EIN Bild rendern. Zwischen Runden letzten Frame halten. */
@@ -79,11 +85,22 @@ export interface Engine {
   setCamera(mode: CameraMode, steamid?: string): void
   /** Überkopf-Schilder; höchstens 15×/s und nur bei Änderung aufrufen. Sichtbar nur bei shown('labels') (options.ts). */
   setOverlay(o: OverlayState): void
+  /** Ziel-Markierung + Flugbahn (immer sichtbar, auch durch Wände), null = entfernen */
+  setMarks?(m: LineupMarks | null): void
+  /** Blickfeld der Grundkamera (setCamera) durch k teilen = Zoom auf die Bildmitte; 1 = aus */
+  setZoom?(k: number): void
+  /**
+   * Kamera übersteuern (Granate folgen wie die Granaten-Kamera, Außenansicht), weich über blendS Sekunden Demo-Zeit ab Tick t0 (Standard:
+   * letztes Bild) aus der Kamera davor; null = zurück zu setCamera. Solange aktiv: kein Viewmodel, der Fokus-Spieler ist sichtbar.
+   */
+  setView?(v: LineupView | null, blendS?: number, t0?: number): void
   /**
    * true = das nächste Bild muss gezeichnet werden, auch in der Pause: Free-Cam-Taste oder Maus aktiv, Asset nachgeladen
-   * (Viewmodel, Welt-Clip, Textur), nach setOverlay oder Optionswechsel. Der Bildtakt fragt das je rAF ab (billig halten).
+   * (Viewmodel, Welt-Clip, Textur), nach setOverlay oder Optionswechsel. Der Bildtakt fragt das je rAF ab, solange er wach ist (billig halten).
    */
   dirty(): boolean
+  /** vom View gesetzt: die Engine ruft es, wenn dirty() ohne Bild true wird (Maus, Taste, Nachgeladenes, Overlay); weckt den schlafenden Takt */
+  onDirty?: () => void
   /** CSS-Pixel; Pixel-Ratio höchstens 1 (Critic P1-5) */
   resize(width: number, height: number): void
   listener(): Listener

@@ -7,7 +7,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { SoundDef, SoundGroup, SoundMap } from '../../shared/assets3d.ts'
-import { kv3, vrf, writeAtomic } from './cs2.ts'
+import { kv3, vrfAsync, writeAtomic } from './cs2.ts'
 import type { Ctx } from './map.ts'
 
 const META = [
@@ -21,9 +21,9 @@ const OVERRIDE: Record<string, string> = { wood_tree: 'wood', wood_dense: 'wood_
 type Groups = Record<string, Record<string, SoundDef[]>>
 
 /** Spieldaten dekompilieren; Soundevents mit base-Vererbung, Suche ohne Groß/Klein, Def-Bau */
-function loadMeta(c: Ctx, work: string) {
+async function loadMeta(c: Ctx, work: string) {
   const meta = join(work, 'meta'); mkdirSync(meta, { recursive: true })
-  vrf(c.exe, ['-i', c.cs2.pak, '-d', '-o', meta, '-f', META.join(',')], c.log)
+  await vrfAsync(c.exe, ['-i', c.cs2.pak, '-d', '-o', meta, '-f', META.join(',')], c.log)
   const read = (f: string) => kv3(readFileSync(join(meta, f.replace(/_c$/, '')), 'utf8'))
 
   // Soundevents (mit base-Vererbung), Suche ohne Groß/Klein
@@ -103,7 +103,7 @@ function loadMeta(c: Ctx, work: string) {
 }
 
 /** Dateien aller Defs exportieren und umwandeln (schon vorhandene bleiben), Defs ohne Datei weg; Rückgabe: Mix-Lautstärken (Default_Mix) */
-function exportSounds(c: Ctx, dir: string, work: string, M: Groups, read: (f: string) => any) {
+async function exportSounds(c: Ctx, dir: string, work: string, M: Groups, read: (f: string) => any) {
   const have = (f: string) => ['.wav', '.mp3'].find(e => existsSync(join(dir, f + e)))
   const all = new Set<string>()
   for (const g of Object.values(M)) for (const defs of Object.values(g)) for (const d of defs) d.files.forEach(f => all.add(f))
@@ -111,7 +111,7 @@ function exportSounds(c: Ctx, dir: string, work: string, M: Groups, read: (f: st
   const list = [...all].filter(f => !have(f)), raw = join(work, 'snd'); mkdirSync(raw, { recursive: true })
   for (let i = 0; i < list.length; i += 100) {
     c.step(0.1 + 0.6 * i / list.length, 'Exporting sounds')
-    vrf(c.exe, ['-i', c.cs2.pak, '-d', '-o', raw, '-f', list.slice(i, i + 100).map(f => `sounds/${f}.vsnd_c`).join(',')], c.log)
+    await vrfAsync(c.exe, ['-i', c.cs2.pak, '-d', '-o', raw, '-f', list.slice(i, i + 100).map(f => `sounds/${f}.vsnd_c`).join(',')], c.log)
   }
   c.step(0.75, 'Converting sounds')
   for (const f of list) {
@@ -139,8 +139,8 @@ function exportSounds(c: Ctx, dir: string, work: string, M: Groups, read: (f: st
 }
 
 /** baut dir/<datei>.wav|mp3 und dir/sound_map.json (zuletzt = fertig) */
-export function buildSounds(c: Ctx, dir: string, work: string): SoundMap {
-  const { read, EV, ev, def, chain, stepTable } = loadMeta(c, work)
+export async function buildSounds(c: Ctx, dir: string, work: string): Promise<SoundMap> {
+  const { read, EV, ev, def, chain, stepTable } = await loadMeta(c, work)
 
   // Waffe → Soundevent aus weapons.vdata (m_aShootSounds, _base-Vererbung)
   const WV = read('scripts/weapons.vdata_c')
@@ -185,7 +185,7 @@ export function buildSounds(c: Ctx, dir: string, work: string): SoundMap {
   for (const se of new Set(Object.values(surfToStep))) if (EV[se]) M.footsteps[se] = [def(se, CAP_STEP)]
   for (const g of ['Gear.CT', 'Gear.T']) { const n = ev(g); if (n) M.footsteps[g] = [def(n, 2)] }
 
-  const mixgroupVol = exportSounds(c, dir, work, M as Groups, read)
+  const mixgroupVol = await exportSounds(c, dir, work, M as Groups, read)
   const sm: SoundMap = { mixgroupVol, surfToStep, map: M }
   writeAtomic(join(dir, 'sound_map.json'), JSON.stringify(sm))
   return sm
@@ -199,8 +199,8 @@ export const CLIP_SOUNDS_V = 2
  * Clip-Soundevents (WeaponAsset.vm.snd, Schlüssel = Event-Name) und Landungen (Oberfläche klein wie floor.bin → Land_<Oberfläche>.StepLeft,
  * aufgelöst wie die Schritte) → dir/<datei> + dir/sounds2.json (zuletzt = fertig). Vorhandene Dateien werden nicht neu exportiert.
  */
-export function buildClipSounds(c: Ctx, dir: string, work: string, events: string[]): ClipSounds {
-  const { read, EV, chain, def, stepTable } = loadMeta(c, work)
+export async function buildClipSounds(c: Ctx, dir: string, work: string, events: string[]): Promise<ClipSounds> {
+  const { read, EV, chain, def, stepTable } = await loadMeta(c, work)
   const clip: Record<string, SoundDef[]> = {}, land: Record<string, SoundDef[]> = {}
   for (const e of events) { const d = chain(e, CAP_NEAR); if (d.length) clip[e] = d }
   for (const [k, se] of Object.entries(stepTable(['Land']))) if (EV[se]) land[k.slice(0, k.lastIndexOf(':'))] = [def(se, CAP_STEP)]
@@ -208,7 +208,7 @@ export function buildClipSounds(c: Ctx, dir: string, work: string, events: strin
   const used = new Set(Object.values(land).map(d => d[0].ev))
   for (const k of Object.keys(EV)) { const m = /^Land_(.+)\.StepLeft$/i.exec(k); if (m && !used.has(k)) land[m[1].toLowerCase()] ??= [def(k, CAP_STEP)] }
   const map = { clip, land }
-  const mixgroupVol = exportSounds(c, dir, work, map, read)
+  const mixgroupVol = await exportSounds(c, dir, work, map, read)
   const out: ClipSounds = { v: CLIP_SOUNDS_V, seen: events, mixgroupVol, map }
   writeAtomic(join(dir, 'sounds2.json'), JSON.stringify(out))
   return out

@@ -1,6 +1,7 @@
 // Teamleiste (Entwurf v2, Bild 6/7): CT links, T rechts, gespiegelt (Slot-Streifen außen, HP-Zahl zur Mitte, Füllung vom äußeren Rand = HP %).
 // Je Spieler 308x70: Steam-Avatar, Name, K/D, Geld, Hauptwaffe, Sterne (Kills dieser Runde), Utility je Granate, Weste/Helm, Kit, Bombe;
 // tot = grau, Avatar in Graustufen, Totenkopf. Klick = onPick(steamid), Rechtsklick = onMute(steamid). Nur Darstellung.
+// Daneben die Sprecher der Seite wie CS2 (hudvoicestatus): Lautsprecher, Avatar, Name, @ Ort; gestapelt, stummgeschaltete fehlen.
 import { useState, type ReactNode } from 'react'
 import type { Side } from '../../../shared/model'
 import { Avatar, HudIcon } from './assets'
@@ -24,7 +25,8 @@ export interface TeamBarProps {
 
 export function TeamBar({ view, side, focus, muted, onPick, onMute }: TeamBarProps) {
   const lr = side === 'CT' ? 'L' : 'R', t = view.teams[side]
-  return (
+  const talk = view.voice?.filter(v => v.side === side && !muted?.has(v.steamid)) ?? []
+  return <>
     <div className={`tb tb-${lr}`} data-hud={`team${lr}`}>
       {/* FACEIT-Team heißt team_<Captain> (Parser schneidet team_ ab) */}
       <div className={`tb-tag ${side}`} data-hud={`tag${lr}`}>{t.captain ? `team_${t.name}` : t.name}<span>{side}</span></div>
@@ -32,7 +34,19 @@ export function TeamBar({ view, side, focus, muted, onPick, onMute }: TeamBarPro
         <Row key={p.steamid} p={p} lr={lr} focus={p.steamid === focus} muted={!!muted?.has(p.steamid)} onPick={onPick} onMute={onMute} />
       ))}
     </div>
-  )
+    {talk.length > 0 && (
+      <div className={`tv tv-${lr}`} data-hud={`voice${lr}`}>
+        {talk.map(v => (
+          <div key={v.steamid} className={`tv-row${v.alive ? '' : ' dead'}`}>
+            <HudIcon name="ui/unmuted" />
+            <Avatar steamid={v.steamid} url={v.avatar} name={v.name} side={v.side} />
+            <b className={v.side}>{v.name}</b>
+            {v.place && <span><i>@</i> {v.place}</span>}
+          </div>
+        ))}
+      </div>
+    )}
+  </>
 }
 
 function Row({ p, lr, focus, muted, onPick, onMute }: { p: HudPlayerView; lr: 'L' | 'R'; focus: boolean; muted: boolean } & Pick<TeamBarProps, 'onPick' | 'onMute'>) {

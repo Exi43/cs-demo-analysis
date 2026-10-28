@@ -1,4 +1,4 @@
-// Baut die 3D-Replay-Daten (CS3D v6, shared/cs3d.ts) aus der Demo. Läuft im Parser-Prozess nach parseDemo:
+// Baut die 3D-Replay-Daten (CS3D v7, shared/cs3d.ts) aus der Demo. Läuft im Parser-Prozess nach parseDemo:
 //   const buf = readDemoBuffer(readFileSync(file)); const m = parseDemo(buf, …)   (Demo nur einmal entpacken)
 //   writeFileSync(join(outDir, `${m.id}.3d.bin.gz`), gzipSync(encode3d(parse3d(buf, m))))
 // Runden, Frames, Spieler, Positionen und HP kommen aus MatchData (CS3D-Frame i = v1-Frame i, Track k = v1-Track k).
@@ -7,7 +7,7 @@
 // 1× parseEvents (Events, fire_bullets, Detonationen), Voice + Server-Sounds (GE_SosStartSoundEvent: Schritte, Landungen, Aufprall
 // liegender Waffen) im selben Durchlauf, daraus liegende Waffen (dropsOf).
 // Gemessen user-demo (291 MB, 21 Runden): +9.2 s (16 Hz 4.7 inkl. Inventar 1.0 + Einstellungen 0.3 + Winkel 2.5 + Events 0.5 + Voice/Sounds/
-// Waffen 1.0) + encode/gzip 0.4 s → 1.84 MB gz (556 liegende Waffen, 18 069 Server-Sounds: +28 KB), RSS ≈ 1.45 GB (Test-maxRSS).
+// Waffen 1.0, Aufkleber/Anhänger aus den FullPackets 0.3 = econ.ts) + encode/gzip 0.4 s → 1.84 MB gz (556 liegende Waffen, 18 069 Server-Sounds: +28 KB), RSS ≈ 1.45 GB (Test-maxRSS).
 // Test: node --max-old-space-size=4096 scripts/dev3d/parse3d-test.ts, liegende Waffen: scripts/dev3d/drops-check.ts
 import * as dp from '@laihoe/demoparser2'
 import type { MatchData } from '../shared/model.ts'
@@ -17,7 +17,8 @@ import {
 } from '../shared/cs3d.ts'
 import { decodeCrosshair } from '../shared/crosshair.ts'
 import { readDemoBuffer } from './parse.ts'
-import { extractVoice, proto } from './voice.ts'
+import { econAttributes, econOf } from './econ.ts'
+import { extractVoice, proto, unsnappy } from './voice.ts'
 
 type Row = Record<string, any>
 type Progress = (pct: number, msg: string) => void
@@ -119,6 +120,9 @@ export function parse3d(raw: Buffer, m: MatchData, progress: Progress = () => {}
   const invs = rounds.map(R => R.tracks.map(() => new Array<number[] | undefined>(R.nFrames))) // Inventar je Frame (dropsOf)
   const pc = PUNCH.map(col)
   const skins: Skin3D[] = [], skinIdx = new Map<string, number>()
+  // Aufkleber/Anhänger je Item-ID ("hi:lo") aus den FullPackets (econ.ts, user-demo +0,3 s); Fehler → ohne
+  const econ = new Map<string, NonNullable<ReturnType<typeof econOf>>>()
+  try { for (const [k, v] of econAttributes(buf, unsnappy)) { const e = econOf(v); if (e) econ.set(k, e) } } catch (e) { console.warn('3D econ:', e) }
   /**
    * Skin-Index (1-basiert) der aktiven Waffe, 0 = Vanilla. Standardwaffen (Item-ID 0) liefern in demoparser2 die Lackierung einer früheren
    * Waffe am selben Entity-Index (demo-econ P0: 4,5–14,2 % der Skin-Frames) → Skin nur mit Item-ID ≠ 0, oder mit Fallback-Paint
@@ -126,13 +130,17 @@ export function parse3d(raw: Buffer, m: MatchData, progress: Progress = () => {}
    */
   const skinOf = (i: number, d: number) => {
     const fb = fbPaint[i] > 0, item = idLo[i] || idHi[i] ? `${idHi[i] >>> 0}:${idLo[i] >>> 0}` : ''
-    const p = fb ? fbPaint[i] : item ? paint[i] : 0
-    if (!(p > 0)) return 0
-    const sd = fb ? fbSeed[i] : seed[i], w = fb ? fbWear[i] : wear[i]
+    const p = fb ? fbPaint[i] : item ? paint[i] : 0, ec = item ? econ.get(item) : undefined
+    if (!(p > 0) && !ec) return 0
+    const sd = fb ? fbSeed[i] : seed[i], w = fb ? fbWear[i] : wear[i], painted = p > 0
     const key = `${item}|${d}|${p}|${sd}|${w}|${ntag[i] ?? ''}|${quality[i]}`
     let s = skinIdx.get(key)
     if (s === undefined) {
-      skins.push({ def: d, paint: p, seed: Math.floor(sd ?? 0), wear: w ?? 0, ...(ntag[i] && { name: ntag[i] }), ...(quality[i] === 9 && { stattrak: true as const }) })
+      // Vanilla mit Aufklebern/Anhänger: paint 0 (Seed/Wear der Demo gehören dann zu keiner Lackierung)
+      skins.push({
+        def: d, paint: painted ? p : 0, seed: painted ? Math.floor(sd ?? 0) : 0, wear: painted ? w ?? 0 : 0,
+        ...(ntag[i] && { name: ntag[i] }), ...(quality[i] === 9 && { stattrak: true as const }), ...ec,
+      })
       skinIdx.set(key, (s = skins.length))
     }
     return s

@@ -27,6 +27,9 @@
         "to": "maps"
       }
     ],
+    "extraFiles": [
+      "THIRD_PARTY_NOTICES.md"
+    ],
     "asarUnpack": [
       "node_modules/@laihoe/**",
       "node_modules/sharp/**",

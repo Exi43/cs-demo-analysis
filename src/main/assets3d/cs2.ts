@@ -1,5 +1,5 @@
 // CS2-Installation finden, Source2Viewer-CLI (VRF) bereitstellen und aufrufen, KeyValues (KV1/KV3) lesen.
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -58,18 +58,91 @@ export async function ensureVrf(dir: string, onPct: (f: number) => void): Promis
 }
 
 /**
+ * .NET-GC von VRF sparsamer: Map-Export 4,6–4,8 statt 5,1 GB RAM, gleich schnell (gemessen). Kerne nicht begrenzen
+ * (DOTNET_PROCESSOR_COUNT=2: 9,4 GB, die Texturen stauen sich)
+ */
+const VRF_ENV = { ...process.env, DOTNET_GCConserveMemory: '7' }
+
+/**
  * VRF strikt mit 1 Thread; Ausgabe in eine Logdatei (nicht in eine Pipe: dort einmal 0xC0000005).
  * Zielordner von -o muss existieren, sonst nimmt VRF ihn bei genau einer Datei als Dateinamen.
  */
 export function vrf(exe: string, args: string[], log: string, retry = true) {
   const fd = openSync(log, 'a')
   try {
-    execFileSync(exe, [...args.map(a => a.replaceAll('\\', '/')), '--threads', '1'], { stdio: ['ignore', fd, fd], windowsHide: true, maxBuffer: 1 << 20 })
+    execFileSync(exe, [...args.map(a => a.replaceAll('\\', '/')), '--threads', '1'], { stdio: ['ignore', fd, fd], windowsHide: true, maxBuffer: 1 << 20, env: VRF_ENV })
   } catch (e: any) {
     // selten AccessViolation in TextureExtract.CopyChannel (ORM-Packen läuft trotz --threads 1 parallel): einmal wiederholen
     if (retry && e?.status === 0xc0000005) return vrf(exe, args, log, false)
     throw new Error(`Source 2 Viewer failed (${e?.status ?? e?.code ?? e}). Log: ${log}`)
   } finally { closeSync(fd) }
+}
+
+// ---------------------------------------------------------------- Tempo: Hintergrund schonend, Vordergrund parallel
+// Hintergrund (Import, App-Start, Match geöffnet): Teile nacheinander, 1 Stapel, 2 Bildaufträge wie früher. Wartet die 3D-Ansicht
+// (worker.ts → boost): Teile gleichzeitig, mehr Stapel/Bildaufträge, zusammen höchstens Kerne − 2. Priorität bleibt BELOW_NORMAL.
+
+/** Zähl-Semaphore mit änderbarer Grenze */
+export function limiter(max: number) {
+  let n = 0
+  const q: (() => void)[] = []
+  const next = () => { while (n < lim.max && q.length) { n++; q.shift()!() } }
+  const lim = {
+    max,
+    /** freier Platz: f startet sofort (synchron, z. B. VRF-Prozess auch dann, wenn danach blockierender Code folgt) */
+    run<T>(f: () => T | Promise<T>): Promise<T> {
+      const go = async () => { try { return await f() } finally { n--; next() } }
+      if (n < lim.max) { n++; return go() }
+      return new Promise<void>(r => q.push(r)).then(go)
+    },
+    set(m: number) { lim.max = m; next() },
+  }
+  return lim
+}
+/** gleichzeitige Skin-Stapel (VRF-Export samt Umwandlung) */
+export const slots = limiter(1), MAX_SLOTS = 4
+/** gleichzeitige sharp-Aufträge von textureCompress (startet alle Texturen eines Modells auf einmal) */
+export const images = limiter(2)
+/** große glTF-Exporte (Modelle, Map: 1–5 GB RAM je VRF-Prozess) immer einzeln */
+const heavy = limiter(1)
+
+let goFast!: () => void, fastNow = false
+/** erfüllt, sobald die 3D-Ansicht wartet (auch mitten im Bau: Promise.race([schritt, fast]) wartet nur im Hintergrund) */
+export const fast = new Promise<void>(r => (goFast = r))
+/** Vordergrund ab jetzt (Grenzen setzt worker.ts) */
+export const boost = () => { fastNow = true; goFast() }
+export const isFast = () => fastNow
+/** je Bau: lane(f) = unabhängiger Teil, im Hintergrund nach dem vorigen, im Vordergrund sofort; nach einem Fehler startet keiner mehr */
+export function lanes() {
+  let chain: Promise<unknown> = Promise.resolve(), failed = false
+  return <T>(f: () => Promise<T>): Promise<T> => {
+    const p = Promise.race([chain, fast]).then(() => { if (failed) throw new Error('3D preparation stopped after an error'); return f() })
+    chain = p.catch(() => { failed = true }) // zugleich: Ablehnung gilt als behandelt, der Aufrufer bekommt sie beim await
+    return p
+  }
+}
+
+const procs = new Set<Promise<unknown>>()
+const spawnVrf = (exe: string, args: string[], log: string) => {
+  const p = new Promise<number | null>((ok, fail) => {
+    const fd = openSync(log, 'a')
+    try {
+      spawn(exe, [...args.map(a => a.replaceAll('\\', '/')), '--threads', '1'], { stdio: ['ignore', fd, fd], windowsHide: true, env: VRF_ENV }).on('error', fail).on('exit', ok)
+    } finally { closeSync(fd) } // das Kind hat eine eigene Kopie des Handles
+  })
+  procs.add(p); p.then(() => procs.delete(p), () => procs.delete(p))
+  return p
+}
+/** bis kein VRF-Prozess mehr läuft (nach einem Fehler, bevor prepare3d tmp löscht) */
+export const vrfIdle = async () => { while (procs.size) await Promise.allSettled([...procs]) }
+/** vrf() als eigener Prozess, ohne den Worker zu blockieren (andere Teile rechnen weiter); glTF-Exporte einzeln (heavy) */
+export function vrfAsync(exe: string, args: string[], log: string): Promise<void> {
+  const go = async () => {
+    let code = await spawnVrf(exe, args, log)
+    if (code === 0xc0000005) code = await spawnVrf(exe, args, log) // wie vrf(): AccessViolation einmal wiederholen
+    if (code !== 0) throw new Error(`Source 2 Viewer failed (${code}). Log: ${log}`)
+  }
+  return args.includes('--gltf_export_format') ? heavy.run(go) : go()
 }
 
 /** Datei atomar schreiben (Abbruch hinterlässt keine halbe Datei, die als Cache gälte) */

@@ -7,6 +7,8 @@ import { Weapon } from '../weapons'
 import type { Jump } from '../App'
 import { decode3d, type CS3D } from '../../shared/cs3d'
 import { InputsOverlay, keysAt } from '../replay3d/InputsOverlay'
+import { createFrameLoop } from '../replay3d/frameloop'
+import { Highlights2D, useHighlights } from '../replay3d/hud/Highlights'
 
 const SPEEDS = [0.5, 1, 2, 4, 8]
 const NADE_INV: Record<string, RegExp> = { smoke: /smoke/i, flash: /flash/i, he: /high explosive/i, molotov: /molotov|incendiary/i, decoy: /decoy/i }
@@ -53,18 +55,23 @@ export function ReplayView({ match, map, img, lowerImg, jump }: { match: MatchDa
     if (sec) setTick(match.rounds[i].freezeEndTick + Number(sec) * TICKRATE)
   }, [match.id, jump?.n])
 
-  // Abspielen
+  // Highlights wie im 3D-Replay; Sprung auch über Runden, Fokus = Spieler weiß umrandet (2D hat keine Kamera)
+  const [hlFocus, setHlFocus] = useState<string>()
+  const seekAny = (t: number) => { setRi(Math.max(0, match.rounds.findLastIndex(r => r.startTick <= t))); setTick(t) }
+  const hl = useHighlights(match, tick, keysOf ?? null, { seek: seekAny, play: setPlaying, pick: setHlFocus })
+
+  // Abspielen im Bildtakt des 3D-Replays (Bildlimit aus dessen Optionen, minimiert kein Bild): sonst zeichnete es mit Monitor-Hz (240 Hz: 54 % eines Kerns)
   useEffect(() => {
     if (!playing) return
-    let last = performance.now(), raf = 0
-    const loop = (now: number) => {
-      const dt = (now - last) / 1000; last = now
-      const next = tickRef.current + dt * TICKRATE * speed
-      if (next >= end) { setTick(end); setPlaying(false); return }
-      setTick(next); raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
+    const loop = createFrameLoop({
+      step(_now, dt) {
+        const next = tickRef.current + (dt / 1000) * TICKRATE * speed
+        if (next >= end) { setTick(end); setPlaying(false) } else setTick(next)
+      },
+      wantsFrame: () => false, onHud() {}, onStats() {},
+    })
+    loop.setPlaying(true)
+    return () => loop.stop()
   }, [playing, speed, end])
 
   // Tastatur
@@ -90,7 +97,7 @@ export function ReplayView({ match, map, img, lowerImg, jump }: { match: MatchDa
     if (c.width !== size * dpr) { c.width = size * dpr; c.height = size * dpr; c.style.width = c.style.height = `${size}px` }
     const ctx = c.getContext('2d')!
     drawScene(ctx, match, { map, level }, level === 'lower' && lowerImg ? lowerImg : img,
-      [{ round, tick, alpha: 1, trail: trail ? 6 : 0, players: only.size ? only : undefined }], (size * dpr) / 1024)
+      [{ round, tick, alpha: 1, trail: trail ? 6 : 0, players: only.size ? only : undefined, highlight: hlFocus }], (size * dpr) / 1024)
   })
   useEffect(() => {
     const ro = new ResizeObserver(() => setTick(t => t + 0.0001))
@@ -149,6 +156,7 @@ export function ReplayView({ match, map, img, lowerImg, jump }: { match: MatchDa
         <div className="canvas-wrap" ref={wrapRef} style={{ position: 'relative' }}>
           <canvas ref={canvasRef} />
           {keysOf && d3 && <InputsOverlay keys={keysAt(d3, keysOf, tick)} label={nameOf(keysOf)} />}
+          <Highlights2D hl={hl} match={match} players={round.tracks.map(t => ({ steamid: t.steamid, name: nameOf(t.steamid), side: t.side, avatar: null }))} />
         </div>
         <div className="side-col">
           <div className={`clock ${clockCls}`}>{clockCls === 'bomb' && <Weapon name="c4" h={26} />}{clock}</div>
@@ -188,6 +196,9 @@ export function ReplayView({ match, map, img, lowerImg, jump }: { match: MatchDa
           </div>
         </div>
         {SPEEDS.map(s => <button key={s} className={s === speed ? 'on' : ''} onClick={() => setSpeed(s)}>{s}x</button>)}
+        <button className={hl.open || hl.reel ? 'on' : ''} title="Highlights: all kills and deaths" onClick={hl.toggle}>
+          Highlights{hl.reel && ` ${hl.reel.i + 1}/${hl.reel.list.length}`}
+        </button>
       </div>
     </div>
   )

@@ -1,8 +1,9 @@
-// CS3D v6: kompakte 3D-Replay-Daten eines Matches, eigene Datei <matchId>.3d.bin.gz neben <matchId>.json.gz.
+// CS3D v7: kompakte 3D-Replay-Daten eines Matches, eigene Datei <matchId>.3d.bin.gz neben <matchId>.json.gz.
 // v3 = v2 + Kanal skin, header.skins, Player3D.crosshair/vm/knife/glove, FLAG.lefthand, FLAG.reloading wirklich gefüllt.
 // v4 = v3 + Rückstoß aimP/aimY/viewP/viewY (32 Hz). decode3d liest v2/v3 weiter (fehlende Kanäle = 0, skins = [], Spieler-Extras fehlen).
 // v5 = v4 + Event player_footstep (Format gleich, nur eine neue Event-Art). decode3d liest v2–v4 weiter.
 // v6 = v5 + liegende Waffen (Sektionen drop.*, Drop3D) + FLAG.defuser. decode3d liest v2–v5 weiter (drop leer).
+// v7 = v6 + Aufkleber/Anhänger (Skin3D.stickers/charm, main/econ.ts; Format gleich). Ältere Matches liest main/index.ts im Hintergrund neu.
 // Schreiben: Parser-Prozess beim Import, writeFileSync(..., gzipSync(encode3d(m))).
 // Lesen: erst im 3D-Tab; main gunzipSync → IPC 'match:load3d' (Uint8Array) → Renderer decode3d (≈40 ms).
 // Reines TS (kein Buffer/DOM, keine enums) → läuft in Main, Renderer und `node scripts/cs3d-selftest.ts`.
@@ -17,7 +18,7 @@
 import { FRAME_STEP, type PlayerInfo, type Side } from './model.ts'
 import type { Crosshair } from './crosshair.ts'
 
-export const CS3D_VERSION = 6
+export const CS3D_VERSION = 7
 export const ANGLE_STEP = 2
 const POS = 2
 const ANG = 65536 / 360
@@ -67,8 +68,18 @@ export const EV = {
 
 /** Lackierung eines Items: def = item_def_idx, paint = Paint-Kit-ID, seed = Muster-Seed (ganzzahlig), wear = Float 0..1 */
 export interface Paint3D { def: number; paint: number; seed: number; wear: number }
-/** header.skins[i] ⇔ Kanalwert skin = i + 1. Gehört zur Waffen-Entity: aufgehobene Waffe trägt den Skin des Vorbesitzers. name = Nametag, stattrak = Qualität 9 */
-export interface Skin3D extends Paint3D { name?: string; stattrak?: true }
+/**
+ * Aufkleber der Waffe (Attribute 113–136, 278–295): slot = Attribut-Platz 0–5, id = sticker_kits-ID, wear 0..1, rot in Grad.
+ * x/y = Versatz im Sticker-Raum (uv2) relativ zu StickerMarkup[schema] des Modells; ohne x/y/schema sitzt er auf StickerMarkup[slot]. scale fehlt = Markup-Skala
+ */
+export interface Sticker3D { slot: number; id: number; wear?: number; scale?: number; rot?: number; x?: number; y?: number; schema?: number }
+/** Anhänger (Attribute 299–306/314/321): id = keychain_definitions-ID, x/y/z = Ort am Waffenmodell (Bone weapon_offset, Zoll), seed = Muster, sticker = Sticker-Anhänger */
+export interface Charm3D { id: number; x?: number; y?: number; z?: number; seed?: number; highlight?: number; sticker?: number }
+/**
+ * header.skins[i] ⇔ Kanalwert skin = i + 1. Gehört zur Waffen-Entity: aufgehobene Waffe trägt den Skin des Vorbesitzers. name = Nametag, stattrak = Qualität 9.
+ * stickers/charm (fehlen in älteren Dateien) aus main/econ.ts; paint 0 = Vanilla-Waffe mit Aufklebern/Anhänger
+ */
+export interface Skin3D extends Paint3D { name?: string; stattrak?: true; stickers?: Sticker3D[]; charm?: Charm3D }
 
 /**
  * Agent pro Spieler und Seite aus CCSPlayerController.m_nPawnCharacterDefIndex (Freeze-End-Ticks); 0 = unbekannt → AGENT_DEFAULT.
@@ -335,7 +346,7 @@ export function decode3d(buf: ArrayBuffer | Uint8Array): CS3D {
   const ab = u8.buffer as ArrayBuffer, at = u8.byteOffset
   const hl = new DataView(ab, at).getUint32(0, true)
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(ab, at + 4, hl))) as CS3DHeader
-  if (header.magic !== 'CS3D' || ![2, 3, 4, 5, CS3D_VERSION].includes(header.version)) throw new Error(`CS3D: unbekanntes Format (${header.magic} v${header.version})`)
+  if (header.magic !== 'CS3D' || ![2, 3, 4, 5, 6, CS3D_VERSION].includes(header.version)) throw new Error(`CS3D: unbekanntes Format (${header.magic} v${header.version})`)
   header.skins ??= [] // v2
   header.sounds ??= [] // vor v6
   const base = at + align4(4 + hl)
@@ -478,15 +489,18 @@ export function sampleTrack(d: CS3D, r: number, k: number, tick: number, out: Tr
   return out
 }
 
-/** Blend-Stärke 0..1 eines Spielers (letztes player_blind; CS:GO-Formel: voll bis 3 s Rest, dann linear aus — für CS2 nicht verifiziert) */
-export function flashAt(d: CS3D, player: number, tick: number): number {
+/** Rest der Blendung in s: blind_duration des letzten player_blind des Spielers (10-s-Fenster) minus vergangene Zeit, 0 = keine */
+export function flashLeft(d: CS3D, player: number, tick: number): number {
   const T = d.evt.tick, rate = d.header.tickrate
-  for (let i = upperBound(T, tick) - 1; i >= 0 && tick - T[i] < 10 * rate; i--) {
-    if (d.evt.type[i] !== EV.player_blind || d.evt.player[i] !== player) continue
-    const rest = d.evt.arg[i] / 100 - (tick - T[i]) / rate
-    return rest > 3 ? 1 : Math.max(0, rest / 3)
-  }
+  for (let i = upperBound(T, tick) - 1; i >= 0 && tick - T[i] < 10 * rate; i--)
+    if (d.evt.type[i] === EV.player_blind && d.evt.player[i] === player) return Math.max(0, d.evt.arg[i] / 100 - (tick - T[i]) / rate)
   return 0
+}
+
+/** Blend-Stärke 0..1 eines Spielers (CS:GO-Formel: voll = ganz weiß bis 3 s Rest, dann linear aus — für CS2 nicht verifiziert) */
+export function flashAt(d: CS3D, player: number, tick: number): number {
+  const rest = flashLeft(d, player, tick)
+  return rest > 3 ? 1 : rest / 3
 }
 
 /** Voice-Pakete im Format von voice-engine.layoutVoice (Opus als Sicht, keine Kopie) */

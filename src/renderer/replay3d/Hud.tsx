@@ -14,6 +14,7 @@ import { InputsOverlay } from './InputsOverlay'
 import { getOptions, onOptions, shown } from './options'
 import { HudIcon } from './hud/assets'
 import { DemoBar, type DemoBarProps } from './hud/DemoBar'
+import { FlashIndicator } from './hud/FlashIndicator'
 import { Killfeed } from './hud/Killfeed'
 import { PlayerPanel } from './hud/PlayerPanel'
 import { Scoreboard } from './hud/Scoreboard'
@@ -75,6 +76,7 @@ export function Hud({ view, data, map, img, lowerImg, mode, focus, muted, onPick
     <div className="hud">
       {ego && shown('crosshair') && (ego.scoped && SNIPER.test(fp!.weapon) ? <Scope k={scopeBlur(data.d, pi, view.tick, fp!.weapon)} />
         : !SNIPER.test(fp!.weapon) && (xh ? <Crosshair c={xh} /> : <div className="h3-cross" />))}
+      {ego && !o.hideAll && <FlashIndicator f={ego} />}
       {shown('minimap') && <Minimap view={view} data={data} map={map} img={img} lowerImg={lowerImg} target={mode === 'free' ? null : focus} />}
       {ni >= 0 && (
         <div className="h3-pip" data-hud="nadecam">
@@ -99,8 +101,8 @@ export function Hud({ view, data, map, img, lowerImg, mode, focus, muted, onPick
   )
 }
 
-/** Crosshair in Geräte-Pixeln (nicht die 3D-Renderskala), neu gezeichnet nur bei anderem Code oder anderer Größe */
-function Crosshair({ c }: { c: CrosshairRender }) {
+/** Crosshair in Geräte-Pixeln (nicht die 3D-Renderskala), neu gezeichnet nur bei anderem Code oder anderer Größe; auch Lineup-Vorschau */
+export function Crosshair({ c }: { c: CrosshairRender }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const cv = ref.current

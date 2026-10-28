@@ -32,6 +32,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .match-card { display: flex; gap: 10px; align-items: center; background: var(--panel2); border-radius: var(--radius); padding: 8px; margin-bottom: 8px; }
 .match-card img { width: 46px; height: 46px; border-radius: 6px; background: #000; }
 .match-card select { width: 100%; margin-top: 2px; }
+.side-foot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.side-foot .nav { padding: 7px 12px; font-size: 12px; font-weight: 500; }
+.side-foot .nav.ok { color: var(--good); } .side-foot .nav.fail { color: var(--bad); }
 main { flex: 1; min-width: 0; min-height: 0; overflow: auto; position: relative; }
 .toast { position: fixed; right: 20px; bottom: 20px; z-index: 10; width: 340px; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; box-shadow: 0 8px 24px #0008; }
 .toast .bar { margin: 6px 0 0; max-width: none; }

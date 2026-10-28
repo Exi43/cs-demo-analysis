@@ -1,0 +1,79 @@
+/* 3D-Vorschau eines Lineups (LineupPreview3D): Dialog über der Utility-Seite, 16:9-Bühne mit schlankem HUD (Fadenkreuz, große Tasten,
+   Granaten-Icon), Steuerleiste darunter, Fadenkreuz-Popover (XhairPanel). Bühne nutzt .hud-stage (Schrift Stratum2, Farben des 3D-HUD)
+   und die h3-Klassen aus hud.css (Fadenkreuz-Canvas .h3-xhair, Ladebild). */
+.lp-back { position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(5, 7, 10, .74); backdrop-filter: blur(6px); }
+.lp-dialog { position: relative; width: min(1280px, 100%, calc((100vh - 180px) * 16 / 9)); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, .6); }
+
+.lp-head { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; }
+.lp-type { display: grid; place-items: center; width: 42px; height: 42px; flex: none; border-radius: 10px; font-size: 26px;
+  background: #3b4250; box-shadow: inset 0 -3px rgba(255, 255, 255, .18); }
+.lp-type.smoke { background: #4a5361; } .lp-type.flash { background: #5d6470; } .lp-type.he { background: #3d5a1f; }
+.lp-type.molotov { background: #9a4a12; } .lp-type.decoy { background: #5a4c3c; }
+.lp-title { min-width: 0; flex: 1; }
+.lp-title b { display: block; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lp-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.lp-chip, .lp-side { font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; padding: 2px 7px; border-radius: 5px;
+  background: var(--panel3); color: #c9d1e0; }
+.lp-side.T { background: #4a3512; color: var(--t); } .lp-side.CT { background: #14304d; color: var(--ct); } .lp-side.both { color: var(--text); }
+.lp-src { font-size: 12px; color: var(--muted); background: var(--panel2); padding: 4px 10px; border-radius: 20px; white-space: nowrap; }
+.lp-src.approx { color: #ffc46b; }
+.lp-close { color: var(--muted); } .lp-close:hover { color: var(--text); }
+
+.lp-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.lp-stage .h3-load { z-index: 2; }
+
+/* Tasten groß und gut sichtbar unten rechts (Hände mit der Granate bleiben frei); gedrückt = Akzentfarbe mit Schein */
+.lp-keys { position: absolute; right: 18px; bottom: 18px; pointer-events: none; }
+.lp-keys .keys { padding: 10px 12px; border-radius: 12px; background: rgba(8, 10, 14, .62); backdrop-filter: blur(3px); box-shadow: 0 4px 18px rgba(0, 0, 0, .45); }
+.lp-keys .keys-grid { grid-template-columns: repeat(4, 50px) 12px 58px 58px; grid-template-rows: 46px 46px 40px; gap: 6px; }
+.lp-keys .key { font: 700 18px var(--f); color: #dfe4ea; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .24); border-radius: 7px;
+  transition: background .06s, box-shadow .06s, transform .06s; }
+.lp-keys .key.down { background: var(--accent); border-color: #ffb08a; color: #fff; box-shadow: 0 0 16px rgba(255, 90, 31, .75); transform: translateY(1px); }
+
+.lp-nade { position: absolute; left: 16px; top: 14px; display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; border-radius: 20px;
+  background: rgba(0, 0, 0, .5); font: 700 13px var(--f); letter-spacing: 1px; text-transform: uppercase; color: #dfe4ea; pointer-events: none; }
+.lp-nade .hud-img { height: 24px; }
+.lp-nade.thrown { color: #ffb08a; }
+.lp-nade em { font-style: normal; color: #ffb08a; margin-left: 2px; }
+.lp-legend { position: absolute; right: 14px; top: 14px; display: flex; gap: 12px; padding: 6px 12px; border-radius: 20px; background: rgba(0, 0, 0, .5);
+  font: 600 12px var(--f); letter-spacing: .4px; color: #e8ebef; pointer-events: none; }
+.lp-legend span { display: flex; align-items: center; gap: 6px; }
+.lp-legend i { display: inline-block; flex: none; }
+.lp-legend .path { width: 22px; height: 4px; border-radius: 2px; background: #ffc040; }
+.lp-legend .ring { width: 12px; height: 12px; border-radius: 50%; border: 3px solid #ff4a2e; }
+
+.lp-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.lp-bar button { display: inline-flex; align-items: center; gap: 6px; }
+.lp-play { width: 42px; height: 42px; justify-content: center; padding: 0; border-radius: 50%; background: var(--accent); color: #fff; }
+.lp-play:hover:not(:disabled) { background: #ff7440; }
+.lp-time { position: relative; flex: 1; height: 6px; border-radius: 3px; background: var(--panel3); }
+.lp-fill { height: 100%; border-radius: 3px; background: var(--accent); }
+.lp-throw { position: absolute; top: -5px; width: 3px; height: 16px; border-radius: 2px; background: #fff; transform: translateX(-1px); box-shadow: 0 0 6px rgba(255, 255, 255, .6); }
+.lp-speed { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 10px; background: var(--panel2); }
+.lp-speed > .ico { margin: 0 4px 0 5px; color: var(--muted); }
+.lp-speed button { padding: 5px 10px; font-weight: 700; font-variant-numeric: tabular-nums; background: none; }
+.lp-speed button.on, .lp-follow.on, .lp-xh.on { background: var(--accent); color: #fff; }
+.lp-follow { white-space: nowrap; }
+.lp-xh { padding: 6px 9px; }
+
+/* Fadenkreuz-Einstellungen: Popover über der Steuerleiste rechts */
+.lp-panel { position: absolute; right: 14px; bottom: 66px; z-index: 3; width: 290px; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .55); }
+.lp-panel-head { display: flex; align-items: center; justify-content: space-between; }
+.lp-seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--panel3); }
+.lp-seg button { flex: 1; padding: 5px 6px; font-size: 12px; font-weight: 700; background: none; }
+.lp-seg button.on, .lp-shapes button.on { background: var(--accent); color: #fff; }
+.lp-shapes { display: flex; gap: 6px; }
+.lp-shapes button { flex: 1; height: 38px; display: grid; place-items: center; padding: 0; background: var(--panel3); }
+.lp-colors { display: flex; align-items: center; gap: 7px; }
+.lp-color { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid rgba(0, 0, 0, .5); }
+.lp-color.on { box-shadow: 0 0 0 2px var(--panel2), 0 0 0 4px #fff; }
+.lp-colors input[type=color] { width: 30px; height: 26px; padding: 0; border: none; background: none; cursor: pointer; }
+.lp-slider { display: grid; grid-template-columns: 70px 1fr 26px; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.lp-slider input { accent-color: var(--accent); }
+.lp-slider b { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.lp-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.lp-code { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: 12px/1.3 Consolas, monospace; }
+.lp-code.bad { border-color: var(--bad); }

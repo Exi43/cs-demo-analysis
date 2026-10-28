@@ -1,0 +1,70 @@
+/* Highlights (Highlights.tsx): Panel mittig über der Demo-Leiste, Knopf in der Demo-Leiste (zeigt laufendes "Play all", z. B. 2/42).
+   Eigenständig (Look wie .hu-menu in bottom.css): die Datei lädt auch im 2D-Replay, dort VOR styles.css, daher setzen Knopf-Regeln
+   mindestens .hud + Klasse + button (schlägt button, button.on, button:hover). Namen wie der Killfeed. Maße in 1080p-px (.hud zoom). */
+.hl-panel {
+  position: absolute; left: 50%; bottom: 112px; z-index: 20; width: 620px; transform: translateX(-50%); display: flex; flex-direction: column;
+  padding: 10px 0 6px; pointer-events: auto; background: #1c1e22; border: 2px solid rgba(20, 20, 22, .95); box-shadow: 0 4px 18px rgba(0, 0, 0, .6);
+  font: 500 17px var(--f); color: #e0e0e0; white-space: nowrap;
+}
+.hud .hl-panel button {
+  margin: 0; padding: 0; border: 0; border-radius: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; transition: none;
+}
+.hl-panel header { display: flex; align-items: center; gap: 10px; padding: 0 10px 8px 16px; }
+.hl-panel header > .hud-ico { width: 24px; height: 24px; color: #fff; }
+.hl-panel header b { font: 700 22px var(--f); letter-spacing: .5px; color: #fff; }
+.hl-panel header .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 500 15px var(--f); color: #9aa0a8; }
+.hud .hl-panel .hl-play {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 2px;
+  background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .18); font-weight: 700;
+}
+.hud .hl-panel .hl-play:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
+.hud .hl-panel .hl-play:disabled { opacity: .4; cursor: default; }
+.hl-play .hud-ico { width: 16px; height: 16px; }
+.hl-panel header .n { font: 700 15px var(--fm); color: #cfd3d8; }
+.hud .hl-panel .x { width: 30px; height: 30px; text-align: center; font: 700 24px/30px var(--f); color: #9aa0a8; }
+.hud .hl-panel .x:hover { background: none; color: #fff; }
+
+/* Spieler-Filter: Avatare in Teamfarbe, gewählt = weißer Rahmen; Kills / Tode wie .hu-seg */
+.hl-who { display: flex; align-items: center; gap: 6px; padding: 0 16px 8px; }
+.hud .hl-who button { border-radius: 3px; opacity: .5; }
+.hud .hl-who button:hover { background: none; opacity: .85; }
+.hud .hl-who button.on { opacity: 1; box-shadow: 0 0 0 2px #fff; }
+.hl-who .hud-av { width: 36px; height: 36px; font-size: 13px; }
+.hud .hl-who .all { height: 36px; padding: 0 12px; font: 700 15px var(--f); background: rgba(255, 255, 255, .1); }
+.hl-kind { display: flex; gap: 2px; padding: 0 16px 8px; }
+.hud .hl-kind button { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 2px; background: rgba(255, 255, 255, .06); color: #a8a8a8; }
+.hud .hl-kind button:hover { background: rgba(255, 255, 255, .12); }
+.hud .hl-kind button.on { background: rgba(255, 255, 255, .2); color: #fff; font-weight: 700; }
+.hl-kind .hud-ico { width: 16px; height: 16px; }
+
+/* Liste: Art, Runde, Rundenuhr, Angreifer, Waffe (+ Kopfschuss), Opfer */
+.hl-list {
+  max-height: 520px; overflow: auto; border-top: 1px solid rgba(255, 255, 255, .08);
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .25) transparent;
+}
+.hud .hl-list .hl-it { display: flex; align-items: center; gap: 8px; width: 100%; height: 36px; padding: 0 16px; }
+.hud .hl-list .hl-it:hover { background: rgba(255, 255, 255, .1); }
+.hud .hl-list .hl-it.cur { background: rgba(80, 160, 255, .22); }
+.hl-it .k { width: 18px; height: 18px; color: #fff; }
+.hl-it.death .k { color: #ff6464; }
+.hl-it .r { width: 38px; flex: none; font: 700 15px var(--fm); color: #cfd3d8; }
+.hl-it .t { width: 40px; flex: none; font: 400 15px var(--fm); color: #8f959c; }
+.hl-it .nm { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 700 16px var(--f); }
+.hl-it .nm.a { text-align: right; }
+.hl-it .CT { color: var(--ct-kf); }
+.hl-it .T { color: var(--t-kf); }
+.hl-it .w { display: flex; align-items: center; gap: 4px; flex: none; }
+.hl-it .hud-img { height: 20px; }
+.hl-it .hs { width: 18px; height: 18px; color: #fff; }
+.hl-none { padding: 14px 16px; font: 500 15px var(--f); color: #9aa0a8; }
+
+/* 2D-Replay (Highlights2D): Bühne über dem Radar, nur das Panel fängt die Maus */
+.hud-stage.hl-stage { position: absolute; inset: 0; pointer-events: none; }
+
+/* Knopf in der Demo-Leiste (DemoBar.tsx); bottom.css lädt danach, daher drei Klassen */
+.hu-demo .hu-btn.hu-hl { margin-left: 10px; padding: 0 10px 0 6px; }
+.hu-demo .hu-btn.hu-hl.on { background: rgba(255, 255, 255, .16); border-color: rgba(255, 255, 255, .3); }
+/* "Play all" läuft: hervorgehoben wie X-Ray an, Fortschritt klein im Knopf */
+.hu-demo .hu-btn.hu-hl.run { background: rgba(80, 160, 255, .22); border-color: rgba(120, 180, 255, .6); }
+.hu-demo .hu-hl .hud-ico { width: 24px; height: 24px; }
+.hu-hl .n { margin-left: 3px; font: 700 14px var(--fm); color: #cfe3ff; }

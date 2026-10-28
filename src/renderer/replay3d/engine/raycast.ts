@@ -3,6 +3,8 @@
 import { Matrix4, type BufferAttribute, type InstancedMesh, type InterleavedBufferAttribute, type Mesh, type Vector3 } from 'three'
 
 export type Raycast = (origin: Vector3, dir: Vector3, far: number) => number
+/** Raycast der Map + Dreiecke (je 9 Floats, glTF-Meter), deren Gitterzellen den Quader lo..hi berühren (Ragdoll-Kollision) */
+export type MapRaycast = Raycast & { near(lo: Vector3, hi: Vector3): Float32Array }
 
 /** Eingabe des Gitterbaus je Mesh: Positionen roh (ggf. interleaved/quantisiert), Index, Weltmatrix je Instanz */
 interface Part { a: ArrayLike<number>; stride: number; off: number; norm: boolean; count: number; idx: ArrayLike<number> | null; mats: Float32Array }
@@ -69,7 +71,7 @@ function gridOf(ps: Part[], cell: number): Grid {
   return { P, T, offs, list, N, mn, mx, cell, nt }
 }
 
-export function buildRaycast(meshes: Mesh[], cell = 2): Raycast {
+export function buildRaycast(meshes: Mesh[], cell = 2): MapRaycast {
   return query(gridOf(parts(meshes), cell))
 }
 
@@ -77,21 +79,36 @@ export function buildRaycast(meshes: Mesh[], cell = 2): Raycast {
  * Wie buildRaycast, Gitterbau aber in einem Worker (Dust2: 300 ms Hauptthread-Block → nur Kopieren der Positionen).
  * Die Engine wartet vor dem ersten Bild auf das Gitter (await rayP), danach trifft der Raycast immer.
  */
-export function buildRaycastAsync(meshes: Mesh[], cell = 2): Promise<Raycast> {
+export function buildRaycastAsync(meshes: Mesh[], cell = 2): Promise<MapRaycast> {
   const src = `const gridOf = ${gridOf.toString()};
 onmessage = e => { const g = gridOf(e.data.ps, e.data.cell); postMessage(g, [g.P.buffer, g.T.buffer, g.offs.buffer, g.list.buffer]) }`
   const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }))
   const w = new Worker(url)
-  return new Promise<Raycast>((res, rej) => {
+  return new Promise<MapRaycast>((res, rej) => {
     w.onmessage = e => res(query(e.data as Grid))
     w.onerror = e => rej(new Error(`raycast worker: ${e.message}`))
     w.postMessage({ ps: parts(meshes), cell })
   }).finally(() => { w.terminate(); URL.revokeObjectURL(url) })
 }
 
-function query({ P, T, offs, list, N, mn, mx, cell, nt }: Grid): Raycast {
+function query({ P, T, offs, list, N, mn, mx, cell, nt }: Grid): MapRaycast {
   const stamp = new Uint32Array(nt)
   let ray = 0
+  const near = (lo: Vector3, hi: Vector3) => {
+    ray = (ray + 1) >>> 0 || 1
+    const a = [lo.x, lo.y, lo.z], b = [hi.x, hi.y, hi.z], i0 = [0, 0, 0], i1 = [0, 0, 0], out: number[] = []
+    for (let r = 0; r < 3; r++) { i0[r] = Math.max(0, Math.floor((a[r] - mn[r]) / cell)); i1[r] = Math.min(N[r] - 1, Math.floor((b[r] - mn[r]) / cell)) }
+    for (let z = i0[2]; z <= i1[2]; z++) for (let y = i0[1]; y <= i1[1]; y++) for (let x = i0[0]; x <= i1[0]; x++) {
+      const c = (z * N[1] + y) * N[0] + x
+      for (let i = offs[c]; i < offs[c + 1]; i++) {
+        const tri = list[i]
+        if (stamp[tri] === ray) continue
+        stamp[tri] = ray
+        for (let k = 0; k < 3; k++) { const v = T[tri * 3 + k] * 3; out.push(P[v], P[v + 1], P[v + 2]) }
+      }
+    }
+    return Float32Array.from(out)
+  }
 
   // Möller–Trumbore, beidseitig; Abstand oder −1
   const hitTri = (ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, tri: number) => {
@@ -110,7 +127,7 @@ function query({ P, T, offs, list, N, mn, mx, cell, nt }: Grid): Raycast {
     return (e2x * qx + e2y * qy + e2z * qz) * inv
   }
 
-  return (origin, dir, far) => {
+  return Object.assign((origin: Vector3, dir: Vector3, far: number) => {
     const o = [origin.x, origin.y, origin.z], d = [dir.x, dir.y, dir.z]
     // Strahl auf das Gitter-AABB beschneiden
     let t0 = 0, t1 = far
@@ -146,5 +163,5 @@ function query({ P, T, offs, list, N, mn, mx, cell, nt }: Grid): Raycast {
       tMax[r] += tDelta[r]
     }
     return best <= far ? best : Infinity
-  }
+  }, { near })
 }

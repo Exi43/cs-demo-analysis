@@ -71,3 +71,22 @@
 .tb-skull { position: absolute; top: 9px; width: 50px; height: 50px; color: rgba(235, 235, 235, .55); }
 .tb-L .tb-skull { right: 18px; }
 .tb-R .tb-skull { left: 18px; }
+
+/* Sprecher (TeamBar.tsx, wie CS2 hudvoicestatus): 10 px neben der Leiste, unten verankert 6 px über dem Geld (.hu-purse ab y 920),
+   wer zuerst sprach steht oben. T rechtsbündig, Lesereihenfolge bleibt. Mit Tasten-Anzeige (rechts unten) rückt T darüber. */
+.tv { position: absolute; bottom: 166px; display: flex; flex-direction: column; gap: 3px; }
+.tv-L { left: 334px; align-items: flex-start; }
+.tv-R { right: 334px; align-items: flex-end; }
+.hud:has(> .h3-keys) .tv-R { bottom: 220px; }
+.tv-row {
+  display: flex; align-items: center; gap: 6px; height: 28px; max-width: 360px; padding: 0 10px 0 6px; border-radius: 2px;
+  background: var(--hud-bg); font: 500 17px var(--f); white-space: nowrap; text-shadow: 0 1px 1px rgba(0, 0, 0, .5);
+}
+.tv-row .hud-ico { width: 18px; height: 18px; }
+.tv-row .hud-av { width: 22px; height: 22px; font-size: 9px; }
+.tv-row.dead .hud-av { filter: grayscale(1) brightness(.6); }
+.tv-row b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tv-row b.CT { color: var(--ct); }
+.tv-row b.T { color: var(--t); }
+.tv-row span { flex: none; color: #6fdc6f; }
+.tv-row span i { font-style: normal; color: #d2b48c; }

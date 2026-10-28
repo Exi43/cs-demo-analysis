@@ -9,7 +9,7 @@ import { decode3d } from '../../../shared/cs3d'
 import type { HudTrack } from '../../../shared/hud'
 import type { MatchData, MatchSummary } from '../../../shared/model'
 import { FIXTURES } from './fixtures'
-import { hudView, timeline } from './state'
+import { hudView, placeName, timeline } from './state'
 
 const DIR = process.env.CSDA_TESTDATA
 function load() {
@@ -81,6 +81,23 @@ for (const [label, useTrack] of [['fallback (no HudTrack)', false], ['HudTrack',
     })
   })
 }
+
+describe('placeName', () => {
+  it('like CS2 (csgo_english.txt): own names from the table, the rest split at case and digits', () => {
+    const raw = ['TSpawn', 'CTSpawn', 'TopofMid', 'BombsiteA', 'LongDoors', 'ARamp', 'TSideUpper', 'Villa1stFloor', 'Floor50', 'SnipersNest', 'Pit', '']
+    expect(raw.map(placeName)).toEqual(['T Start', 'CT Start', 'Top of Mid', 'Bombsite A', 'Long Doors', 'A Ramp', 'T Side Upper', 'Villa 1st Floor',
+      '50th Floor', "Sniper's Nest", 'Pit', ''])
+  })
+})
+
+describe.skipIf(!T)('voice user-demo', () => {
+  it('speakers in speaking order (stack: first on top) with CS2 place, unknown steamids skipped', () => {
+    const { match } = T!.data, R13 = match.rounds.find(r => r.num === 13)!, sid = (n: string) => match.players.find(p => p.name === n)!.steamid
+    const v = hudView(T!.data, null, R13.startTick + 2 * 64, null, [sid('Derdummbadss'), '1', sid('C3M0'), sid('Kugel666')], {})
+    expect(v.voice?.map(p => [p.name, p.side, p.place])).toEqual([['Derdummbadss', 'T', 'T Start'], ['C3M0', 'CT', 'CT Start'], ['Kugel666', 'CT', 'CT Start']])
+    expect(hudView(T!.data, null, R13.startTick, null, [], {}).voice).toEqual([])
+  })
+})
 
 describe.skipIf(!T)('timeline user-demo', () => {
   it('kills/deaths of Exi + bomb events, same as the fixtures, cached per focus', () => {

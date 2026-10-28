@@ -6,26 +6,30 @@
 // Bild wie CS2 (post.ts): Welt + Viewmodel linear in ein HDR-Ziel, Himmel (gedreht) und Nebel davor, Endpass mit Auto-Belichtung,
 // Hable-Kurve, Bloom (nur High) und LUT aufs Canvas; danach Flash-Schicht der Effekte und Granaten-Kamera (gleiches Endpass-Programm).
 // Lichtanzahl steht ab dem ersten Bild fest (Sonne, Hemisphere, 4 Punktlichter für Effekte). Optionen aus options.ts, Free-Cam-Tasten
-// aus hotkeys.ts; dirty() meldet dem Bildtakt, wann in der Pause ein neues Bild nötig ist.
+// aus hotkeys.ts; dirty() meldet dem Bildtakt, wann in der Pause ein neues Bild nötig ist, onDirty weckt ihn.
+// Utility-Vorschau (utility/preview): ohne Agenten-Assets (nur Map gebaut) Spieler nur als Kamera; setMarks zeichnet Ziel + Flugbahn (marks.ts),
+// setZoom teilt das Blickfeld, setView übersteuert die Kamera (Granate folgen mit nadecam.ts nadePose, Außenansicht) mit weicher Überblendung.
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
-import { AGENT_DEFAULT, EV, FLAG, newSample, roundAt, sampleTrack, upperBound } from '../../../shared/cs3d'
+import { AGENT_DEFAULT, EV, FLAG, NADE, TELEPORT, newSample, roundAt, sampleTrack, upperBound, type TrackSample } from '../../../shared/cs3d'
 import { floorLayer, parseFloorGrid, type PrepareProgress } from '../../../shared/assets3d'
 import type { Side } from '../../../shared/model'
-import { CS2_VFOV, HU, eyeZ, worldToGltf, type CameraMode, type CreateEngine, type EffectsContext, type OverlayState } from '../contracts'
+import { CS2_VFOV, HU, eyeZ, worldToGltf, type CameraMode, type CreateEngine, type EffectsContext, type LineupView, type OverlayState } from '../contracts'
 import { actionsOf } from '../actions'
 import { createEffects } from '../effects'
 import { getHotkeys, type HotkeyAction } from '../hotkeys'
 import { getOptions, onOptions, shown } from '../options'
-import { Agent, Label, adopt, worldClips, type WeaponTemplate } from './agents'
+import { Agent, Label, adopt, flashWeight, phaseInc, worldClips, type Ragdoll, type WeaponTemplate } from './agents'
 import { loadMap, releaseSkyRefl, setSkyRefl } from './map'
 import { createDrops } from './drops'
-import { createNadeCam } from './nadecam'
+import { createMarks } from './marks'
+import { createNadeCam, nadePose } from './nadecam'
 import { installMapLight } from './lighting'
 import { createPost, installFog } from './post'
-import { buildRaycastAsync, type Raycast } from './raycast'
+import { NP, RP, simulate } from './ragdoll'
+import { buildRaycastAsync, type MapRaycast, type Raycast } from './raycast'
 import { SkinCache } from './skins'
 import { uploadPlugin } from './texstream'
 import { VM_DEFAULT, Viewmodel, vmStateAt, type VmTemplate } from './viewmodel'
@@ -40,6 +44,8 @@ const SNIPER = /awp|ssg|g3sg1|scar-20/i
 const FLY = 600, LOOK = 0.15
 /** Free-Cam näher als so viele u an der Körperachse (Füße bis Auge) eines Spielers: Modell ausblenden */
 const NEAR_U = 40
+/** Utility-Vorschau, Granate folgen: Kamera so weit hinter (m) und über (m) dem Projektil */
+const FOLLOW_M = 1.3, FOLLOW_UP = 0.35
 /** Free-Cam-Bewegungstasten (hotkeys.ts); camFast allein bewegt nicht */
 const MOVE: HotkeyAction[] = ['camForward', 'camBack', 'camLeft', 'camRight', 'camUp', 'camDown']
 /** horizontales CS-FOV (4:3) → vertikales FOV */
@@ -51,7 +57,10 @@ async function bin(url: string) {
   return r.arrayBuffer()
 }
 
-interface Death { tick: number; fall: THREE.Vector3 }
+/** Tod in einer Runde: Angreifer (Spieler-Index, 255 = Welt), Kopfschuss; rag = Ragdoll, beim ersten Bild danach gerechnet (null = geht nicht) */
+interface Death { tick: number; att: number; hs: boolean; rag?: Ragdoll | null }
+/** Treffer-Stärke (m/s am getroffenen Teil) nach Waffenklasse; CS2-Kräfte stehen nicht in den Daten, nach Bild gewählt. Sonst Pistole 4, Gewehr 5,5 */
+const PUSH: [RegExp, number][] = [[/knife|bayonet/, 2.5], [/taser/, 1.5], [/awp/, 9], [/ssg08|deagle|revolver|nova|xm1014|mag7|sawedoff/, 7], [/g3sg1|scar20/, 6.5], [/mac10|mp9|mp7|mp5sd|ump45|p90|bizon/, 4]]
 
 export const createEngine: CreateEngine = async (canvas, assets, data, onProgress) => {
   const t0 = performance.now()
@@ -85,8 +94,8 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       const k1 = R.tracks.map(p => v1 ? v1.tracks.findIndex(t => t.steamid === P[p].steamid) : -1)
       return { v1, k1, sides: k1.map(i => (i >= 0 ? v1!.tracks[i].side : 'T') as Side) }
     })
-    const agentKeys = new Map<string, string>() // `${p}:${side}` → Modell-URL
-    rounds.forEach((ri, r) => H.rounds[r].tracks.forEach((p, k) => agentKeys.set(`${p}:${ri.sides[k]}`, modelUrl(p, ri.sides[k]))))
+    const agentKeys = new Map<string, string>() // `${p}:${side}` → Modell-URL; ohne Agenten-Assets (Utility-Vorschau nur mit Map) leer
+    rounds.forEach((ri, r) => H.rounds[r].tracks.forEach((p, k) => { const u = modelUrl(p, ri.sides[k]); if (u) agentKeys.set(`${p}:${ri.sides[k]}`, u) }))
     const glbCache = new Map<string, Promise<THREE.Object3D>>()
     const glb = (url: string) => {
       let g = glbCache.get(url)
@@ -104,7 +113,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     const rayP = mapP.then(m => buildRaycastAsync(m.solid).catch(e => { console.warn('raycast', e); return null }), () => null)
     const [map, clipScene, templates, weaponScenes, legacyScenes, gloveList, floorBuf, probeBuf, lutBuf] = await Promise.all([
       mapP,
-      loader.loadAsync(assets.agents.clips),
+      assets.agents.clips ? loader.loadAsync(assets.agents.clips) : null,
       Promise.all([...new Set(agentKeys.values())].map(async u => [u, await glb(u)] as const)).then(e => new Map(e)),
       Promise.all(weaponDefs.map(w => { const u = assets.weapons[w].glb; return u ? glb(u) : null })),
       Promise.all(weaponDefs.map(w => opt(assets.weapons[w].legacyGlb))),
@@ -116,14 +125,24 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     const litOff = await litP
     progress('agents', 70, 'Preparing agents')
     const grid = parseFloorGrid(floorBuf, probeBuf)
-    const clips = new Map(clipScene.animations.map(c => [c.name, c]))
+    const clips = new Map((clipScene?.animations ?? []).map(c => [c.name, c]))
     const weapons = new Map<number, WeaponTemplate>(weaponDefs.map((w, i) => [w, { asset: assets.weapons[w], scene: weaponScenes[i], legacy: legacyScenes[i] }]))
     const gloveScenes = new Map<number, THREE.Object3D>()
     gloveDefs.forEach((g, i) => { if (gloveList[i]) gloveScenes.set(g, gloveList[i]!) })
-    const skins = new SkinCache(renderer, assets, H.skins, P, () => { dirty = true }, 2048) // Ego-Skin/-Handschuh
+    // dirty(): Bild in der Pause nötig (Optionswechsel, Overlay, Nachgeladenes, fertiger Skin, Maus); gehaltene Free-Cam-Tasten und
+    // offene Effekt-Arbeit (Smoke-/Feuer-Füllung, Impact-Strahlen) prüft dirty() selbst. touch() weckt dazu den schlafenden Bildtakt (onDirty).
+    let dirty = true, onDirty: (() => void) | undefined
+    const touch = () => { dirty = true; onDirty?.() }
+    const skins = new SkinCache(renderer, assets, H.skins, P, touch, 2048) // Ego-Skin/-Handschuh
 
     // ---------------------------------------------------------------- Szene
     scene.add(map.root)
+    // statische Map-Geometrie: CPU-Kopie gleich nach dem Hochladen weg (Raycast hat seine Kopie schon, Culling braucht nur die
+    // boundingSphere, die three vor dem ersten Hochladen rechnet). Gemessen Ancient: −170 MB Renderer-RAM schon beim Öffnen, mehr beim Umherfliegen.
+    map.root.traverse(o => {
+      const g = (o as THREE.Mesh).geometry
+      if (g) for (const a of [...Object.values(g.attributes), g.index]) ((a as THREE.InterleavedBufferAttribute)?.isInterleavedBufferAttribute ? (a as THREE.InterleavedBufferAttribute).data : a as THREE.BufferAttribute | null)?.onUpload(freeArray)
+    })
     for (const m of map.meshes) m.receiveShadow = true
     for (const m of map.solid) m.renderOrder = MAP_ORDER // opake Map zuerst: X-Ray testet nur gegen sie
     scene.background = map.sky ?? new THREE.Color(0x9cc3e6)
@@ -165,7 +184,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     })()
 
     // ab dem ersten Bild fertig (await rayP unten); nur wenn der Worker scheitert, trifft der Raycast nie etwas
-    let ray: Raycast = () => Infinity
+    let ray: Raycast = () => Infinity, mapRay: MapRaycast | null = null // mapRay.near: Dreiecke für die Ragdolls
     const raycast: Raycast = (o, d, far) => ray(o, d, far)
 
     // ---------------------------------------------------------------- Effekte
@@ -191,10 +210,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     const X = actionsOf(d, assets.weapons) // einmal beim Laden (sonst baut das erste Bild die Liste, ~25 ms); Audio nutzt denselben Cache
     const drops = createDrops(scene, d, weapons, skins, grid, raycast) // liegende Waffen (CS3D v6)
 
-    // dirty(): Bild in der Pause nötig (Optionswechsel, Overlay, Nachgeladenes, fertiger Skin, Maus); gehaltene Free-Cam-Tasten und
-    // offene Effekt-Arbeit (Smoke-/Feuer-Füllung, Impact-Strahlen) prüft dirty() selbst
-    let dirty = true
-    const offOptions = onOptions(() => { dirty = true })
+    const offOptions = onOptions(() => { dirty = true }) // den Takt weckt frameloop.ts selbst
 
     // ---------------------------------------------------------------- Ego-Sicht: Arme je Agentenmodell, Waffe je Def erst bei Bedarf
     // laden (VRAM) und vorab übersetzen (compileAsync), bis dahin ohne Viewmodel. Welt-Clips der Spielermodelle ebenso je Waffe.
@@ -203,7 +219,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     const vms = new Map<string, Viewmodel>(), vmTpl = new Map<number, VmTemplate>(), vmOk = new Map<Viewmodel, Set<number>>(), vmBusy = new Set<string>()
     const vmRoots: THREE.Object3D[] = [] // für dispose
     const later = (key: string, job: () => Promise<void>) => {
-      if (!vmBusy.has(key)) { vmBusy.add(key); job().then(() => { dirty = true }, e => console.warn('lazy load', key, e)) }
+      if (!vmBusy.has(key)) { vmBusy.add(key); job().then(touch, e => console.warn('lazy load', key, e)) }
     }
     const worldSeen = new Set<number>(), animCache = new Map<string, Promise<THREE.AnimationClip[]>>()
     /** Welt-Clips einer Waffe einmal laden (eine GLB je Waffenklasse) und allen Agenten geben (worldClips macht shoot_* additiv) */
@@ -238,28 +254,97 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
 
     // ---------------------------------------------------------------- Zustand pro Bild
     const samples = P.map(() => newSample()), tmp = newSample()
-    let curRound = -1, lastTick = NaN, deaths: (Death | null)[] = []
+    let curRound = -1, lastTick = NaN, deaths: (Death | null)[] = [], phases: Float64Array[] = []
+    /** je Runde einmal: Tode (mit ihren Ragdolls) und Schrittphasen; bleiben beim Rundenwechsel, Spulen zurück rechnet nichts neu */
+    const roundState = new Map<number, { deaths: (Death | null)[]; phases: Float64Array[] }>()
     const deathsOf = (r: number): (Death | null)[] => {
       const R = H.rounds[r], n = R.nFrames, end = R.firstTick + (n - 1) * step
-      const ev = new Map<number, [number, number]>() // Opfer → [tick, Angreifer]
+      const ev = new Map<number, Death>() // Opfer → erster Tod
       for (let i = upperBound(d.evt.tick, R.firstTick - 1); i < d.evt.tick.length && d.evt.tick[i] <= end; i++)
-        if (d.evt.type[i] === EV.player_death && !ev.has(d.evt.player[i])) ev.set(d.evt.player[i], [d.evt.tick[i], d.evt.arg[i] & 255])
+        if (d.evt.type[i] === EV.player_death && !ev.has(d.evt.player[i])) ev.set(d.evt.player[i], { tick: d.evt.tick[i], att: d.evt.arg[i] & 255, hs: (d.evt.arg[i] & 256) !== 0 })
       return R.tracks.map((p, k) => {
         const fb = d.frameBase[r] + k * n
         let was = false, i = 0
         for (; i < n; i++) { const alive = (d.flags[fb + i] & FLAG.alive) !== 0; if (alive) was = true; else if (was) break }
         if (i === n) return null
-        const [tick, att] = ev.get(p) ?? [R.firstTick + i * step, 255]
-        // weg vom Angreifer fallen, sonst rückwärts
-        sampleTrack(d, r, k, tick - step, tmp)
-        const fall = new THREE.Vector3(-Math.sin(tmp.yaw * D2R), 0, -Math.cos(tmp.yaw * D2R)), ka = R.tracks.indexOf(att)
-        if (ka >= 0 && ka !== k) {
-          const vx = tmp.x, vy = tmp.y
-          sampleTrack(d, r, ka, tick, tmp)
-          if (Math.hypot(vx - tmp.x, vy - tmp.y) > 1) fall.set(vy - tmp.y, 0, vx - tmp.x)
-        }
-        return { tick, fall: fall.normalize() }
+        return ev.get(p) ?? { tick: R.firstTick + i * step, att: 255, hs: false }
       })
+    }
+    /** Schrittphase je Track, je Frame aufsummiert wie Agent.pose (phaseInc): hängt nicht vom Abspielen ab (Spulen, Todespose der Ragdoll) */
+    const phasesOf = (r: number) => {
+      const R = H.rounds[r], n = R.nFrames, dt = step / rate
+      return R.tracks.map((_, k) => {
+        const fb = d.frameBase[r] + k * n, out = new Float64Array(n)
+        const speed = (i: number) => {
+          const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1), s = Math.hypot(d.x[fb + b] - d.x[fb + a], d.y[fb + b] - d.y[fb + a])
+          return b === a || s > TELEPORT ? 0 : s / ((b - a) * dt)
+        }
+        for (let i = 1; i < n; i++) {
+          const f = d.flags[fb + i]
+          out[i] = out[i - 1] + (f & (FLAG.airborne | FLAG.planting | FLAG.defusing) ? 0 : phaseInc((speed(i - 1) + speed(i)) / 2, d.duck[fb + i] > 0.5, (f & FLAG.walking) !== 0, dt))
+        }
+        return out
+      })
+    }
+    const phaseAt = (r: number, k: number, tick: number) => {
+      const R = H.rounds[r], ph = phases[k], f = Math.max(0, Math.min(R.nFrames - 1, (tick - R.firstTick) / step)), i = Math.floor(f)
+      return (ph[i] + (ph[Math.min(R.nFrames - 1, i + 1)] - ph[i]) * (f - i)) % 1
+    }
+    /** Boden (three-y) unter einem Punkt (three) aus dem Boden-Raster, −Infinity = keiner: Netz für Ragdoll-Teile außerhalb der Dreiecke */
+    const floorY = (x: number, y: number, z: number) => { const l = floorLayer(grid, z / HU, x / HU, y / HU, 200); return l < 0 ? -Infinity : grid.z[l] * HU }
+    const hitDir = new THREE.Vector3(), hitAt = new THREE.Vector3(), pushOf = (def: number) => {
+      const w = assets.weapons[def]
+      return w ? PUSH.find(([re]) => re.test(w.className))?.[1] ?? (w.anim === 'pistol' ? 4 : 5.5) : 5
+    }
+    /**
+     * Treffer-Impuls (m/s) auf die Ragdoll-Partikel v: HE = Druck von der Detonation auf alle Teile; sonst Richtung des letzten Schusses des
+     * Angreifers (≤ 0,5 s), ohne Schuss (Messer, Zeus) Angreifer → Opfer; Kopfschuss auf den Kopf, sonst Brust und Schultern, ein Viertel
+     * davon auf den ganzen Körper. Welt, Feuer, Sturz: kein Impuls, nur Schwerkraft.
+     */
+    function hitImpulse(v: Float32Array, dth: Death, r: number, k: number, x: ArrayLike<number>) {
+      const add = (i: number, s: number) => { v[i * 3] += hitDir.x * s; v[i * 3 + 1] += hitDir.y * s; v[i * 3 + 2] += hitDir.z * s }
+      const N = d.nade
+      for (let i = upperBound(N.throwTick, dth.tick) - 1; i >= 0 && N.throwTick[i] > dth.tick - 10 * rate; i--) {
+        if (N.type[i] !== NADE.he || N.detTick[i] > dth.tick || N.detTick[i] < dth.tick - rate / 4) continue
+        hitDir.set(x[0], x[1], x[2]).sub(worldToGltf(N.x[i], N.y[i], N.z[i], hitAt))
+        const dist = hitDir.length() / HU
+        if (dist > 450) continue
+        hitDir.normalize().y += 0.3
+        hitDir.normalize()
+        for (let p = 0; p < NP; p++) add(p, 1.5 + 3.5 * (1 - dist / 450))
+        return
+      }
+      const R = H.rounds[r], ka = R.tracks.indexOf(dth.att)
+      if (ka < 0 || ka === k) return
+      const S = d.shot
+      let def = -1
+      for (let i = upperBound(S.tick, dth.tick) - 1; i >= 0 && S.tick[i] >= dth.tick - rate / 2 && def < 0; i--) {
+        if (S.player[i] !== dth.att) continue
+        const pi = S.pitch[i] * D2R, ya = S.yaw[i] * D2R
+        worldToGltf(Math.cos(pi) * Math.cos(ya), Math.cos(pi) * Math.sin(ya), -Math.sin(pi), hitDir)
+        def = S.weapon[i]
+      }
+      if (def < 0) {
+        sampleTrack(d, r, ka, dth.tick, tmp)
+        hitDir.set(x[RP.chest * 3], x[RP.chest * 3 + 1], x[RP.chest * 3 + 2]).sub(worldToGltf(tmp.x, tmp.y, eyeZ(tmp.z, tmp.duck), hitAt)).normalize()
+        def = tmp.weapon
+      }
+      const s = pushOf(def)
+      for (let p = 0; p < NP; p++) add(p, s / 4)
+      if (dth.hs) add(RP.head, s * 1.3)
+      else { add(RP.chest, s); add(RP.shL, s * 0.6); add(RP.shR, s * 0.6) }
+    }
+    /** Ragdoll aus der eben gesetzten Todespose: Tempo des Spielers + Treffer-Impuls, Map-Dreiecke um den Ort; gerechnet wird beim Zeigen */
+    function ragdollOf(ag: Agent, dth: Death, r: number, k: number, s: TrackSample): Ragdoll | null {
+      ag.root.updateMatrixWorld(true)
+      const st = ag.ragdollStart()
+      if (!st) return null
+      const v = new Float32Array(NP * 3)
+      worldToGltf(s.vx, s.vy, s.vz, hitAt)
+      for (let i = 0; i < NP; i++) hitAt.toArray(v, i * 3)
+      hitImpulse(v, dth, r, k, st.x)
+      const c = st.x, tris = mapRay?.near(new THREE.Vector3(c[0] - 3, c[1] - 3, c[2] - 3), new THREE.Vector3(c[0] + 3, c[1] + 2.5, c[2] + 3))
+      return { ...st, sim: simulate({ ...st, v }, { tris: tris ?? new Float32Array(0), floor: floorY }) }
     }
     /** Runde und Tick mit Daten; zwischen Runden letzten Frame halten */
     const clampTick = (tick: number): [number, number] => {
@@ -284,32 +369,59 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
 
     const cam = { mode: 'free' as CameraMode, focus: -1, x: 0, y: 0, z: 0, yaw: 0, pitch: 45 }
     let focusK = -1 // Track-Index des Fokus-Spielers in der aktuellen Runde
+    // Utility-Vorschau: Zoom der Grundkamera, übersteuerte Kamera (setView) mit Überblendung aus Pose p0/q0/f0 ab Tick t0 über dur Ticks
+    let zoom = 1, view: { v: LineupView; t0: number; dur: number; p0: THREE.Vector3; q0: THREE.Quaternion; f0: number; elev?: number } | null = null
+    const vP = new THREE.Vector3(), vL = new THREE.Vector3(), vD = new THREE.Vector3(0, 0, 1), vQ = new THREE.Quaternion(), vM = new THREE.Matrix4()
+    const orbitPos = (o: Extract<LineupView, { orbit: unknown }>['orbit'], a: number, elev: number) => {
+      const ce = Math.cos(elev * D2R), c = o.center
+      worldToGltf(c[0] + Math.cos(a) * ce * o.dist, c[1] + Math.sin(a) * ce * o.dist, c[2] + Math.sin(elev * D2R) * o.dist, vP); worldToGltf(...c, vL)
+    }
+    /**
+     * Höhe der Kreisfahrt einmal je Außenansicht: die flachste, bei der der Kreis (16 Richtungen) zu mind. 60 % frei bleibt; sonst (z. B. Smoke
+     * unter dem Dach der Mid-Doors, alles nach ~50 u zu) fast senkrecht von oben. Der Wand-Stopp holte die Kamera sonst bis in den Rauch.
+     */
+    const orbitElev = (o: Extract<LineupView, { orbit: unknown }>['orbit']) => {
+      for (const e of [o.elev, 55, 70].filter(e => e >= o.elev)) {
+        let free = Infinity
+        for (let i = 0; i < 16 && free >= 0.6; i++) { orbitPos(o, (i * Math.PI) / 8, e); const far = vP.distanceTo(vL); free = Math.min(free, raycast(vL, vD.subVectors(vP, vL).normalize(), far) / far) }
+        if (free >= 0.6) return e
+      }
+      return 85
+    }
 
     function updateAgents(r: number, t: number, dt: number, snap: boolean) {
       const R = H.rounds[r], n = R.nFrames, info = rounds[r], o = getOptions(), showLabels = shown('labels')
       const fi = Math.max(0, Math.min(n - 1, Math.floor((t - R.firstTick) / step)))
+      // Kamera in Source-Units für die Nähe-Prüfung: Free-Cam bzw. bei setView die zuletzt gezeigte
+      const cx = view ? camera.position.z / HU : cam.x, cy = view ? camera.position.x / HU : cam.y, cz = view ? camera.position.y / HU : cam.z
       for (const a of agents.values()) a.root.visible = false
       for (const l of labels) l.sprite.visible = false
       active.fill(null); focusK = -1
       if (low) for (let p = 0; p < P.length; p++) blobs.setMatrixAt(p, hidden)
       R.tracks.forEach((p, k) => {
-        const side = info.sides[k], ag = agents.get(`${p}:${side}`)!, s = samples[p], fb = d.frameBase[r] + k * n
+        const side = info.sides[k], ag = agents.get(`${p}:${side}`), s = samples[p], fb = d.frameBase[r] + k * n
         const dth = deaths[k], dead = !!dth && t >= dth.tick
         if (!dead && !(d.flags[fb + fi] & FLAG.alive)) return
-        sampleTrack(d, r, k, dead ? dth!.tick - step : t, s)
+        const tp = dead ? dth!.tick - step : t // Pose-Zeit; tot: Todespose (letzter Frame davor), Grundlage der Ragdoll
+        sampleTrack(d, r, k, tp, s)
         if (p === cam.focus) focusK = k
+        if (!ag) return // ohne Agenten-Modell (Utility-Vorschau nur mit Map): nur Kamera
         const cls = s.weapon ? assets.weapons[s.weapon]?.anim ?? 'rifle' : 'knife'
         if (!dead) ag.setWeapon(s.weapon, weapons.get(s.weapon), skins.weapon(s.skin, s.weapon))
         ag.setGlove(gloveScenes.get(P[p].glove?.[side]?.def ?? 0), skins.glove(p, side))
         const act = dead ? null : X.at(p, t)
         if (!dead) { worldFor(s.weapon); if (act) worldFor(act.def) }
-        ag.pose(s, cls, dead ? 0 : dt, dead ? -1 : since(fb, fi, FLAG.planting, t, R.firstTick), dead ? -1 : since(fb, fi, FLAG.defusing, t, R.firstTick), act, X.jumps(p), t, rate)
-        if (dead) ag.fall((t - dth!.tick) / rate, dth!.fall)
+        ag.pose(s, cls, dead ? 0 : dt, dead ? -1 : since(fb, fi, FLAG.planting, t, R.firstTick), dead ? -1 : since(fb, fi, FLAG.defusing, t, R.firstTick), act, X.jumps(p), tp, rate,
+          flashWeight(d, p, tp), phaseAt(r, k, tp))
+        if (dead) {
+          if (dth!.rag === undefined) dth!.rag = ragdollOf(ag, dth!, r, k, s)
+          if (dth!.rag) ag.ragdoll(dth!.rag, (t - dth!.tick) / rate)
+        }
         ag.light(grid, s.x, s.y, s.z, dt, snap)
         ag.root.updateMatrixWorld(true) // Mündung und Kopf für Effekte/Schild
-        // Ego: eigener Körper weg; Free-Cam im Körper (Start am Augpunkt nach Ego→Free, Durchfliegen): sonst füllt sein Inneres das Bild
-        ag.root.visible = cam.mode === 'ego' ? p !== cam.focus
-          : Math.hypot(s.x - cam.x, s.y - cam.y, cam.z - Math.min(Math.max(cam.z, s.z), eyeZ(s.z, s.duck))) >= NEAR_U
+        // Ego: eigener Körper weg; Free-Cam/setView im Körper (Start am Augpunkt nach Ego→Free, Durchfliegen): sonst füllt sein Inneres das Bild
+        ag.root.visible = cam.mode === 'ego' && !view ? p !== cam.focus
+          : Math.hypot(s.x - cx, s.y - cy, cz - Math.min(Math.max(cz, s.z), eyeZ(s.z, s.duck))) >= NEAR_U
         active[p] = ag; silenced[p] = s.flags & FLAG.silencer ? 1 : 0
         // X-Ray + Schadens-Rot (an X-Ray gekoppelt) nur Lebende; Rot von den Füßen bis Höhe × fehlende HP (nicht nur der letzte Treffer),
         // blinkt einige Sekunden nach jedem Treffer; Füße/Scheitel aus der Pose (Sprung, Ducken)
@@ -347,7 +459,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     let drag = false, px = 0, py = 0
     const applyAngles = (yaw: number, pitch: number) => camera.rotation.set(-pitch * D2R, yaw * D2R + Math.PI, 0, 'YXZ')
     const fwd = new THREE.Vector3(), eye = new THREE.Vector3()
-    function updateCamera(realDt: number) {
+    function updateCamera(realDt: number, t: number) {
       const s = focusK >= 0 ? samples[cam.focus] : null
       let fov = CS2_VFOV
       if (cam.mode === 'ego' && s) {
@@ -365,6 +477,23 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
         worldToGltf(cam.x, cam.y, cam.z, camera.position)
         applyAngles(cam.yaw, cam.pitch)
       }
+      if (zoom !== 1) fov = (2 * Math.atan(Math.tan((fov * D2R) / 2) / zoom)) / D2R
+      if (view) { // Granate folgen (Pose wie die Granaten-Kamera) bzw. fester Blick, weich aus der Kamera davor (smoothstep über die Demo-Zeit)
+        const v = view.v
+        if ('nade' in v) { nadePose(d, v.nade, t, vP, vD); vL.copy(vP).add(vD); vP.addScaledVector(vD, -FOLLOW_M).y += FOLLOW_UP }
+        else if ('orbit' in v) {
+          const o = v.orbit
+          view.elev ??= orbitElev(o)
+          orbitPos(o, (o.yaw0 + (360 * (t - o.t0)) / (o.turnS * rate)) * D2R, view.elev)
+          const far = vP.distanceTo(vL), hit = raycast(vL, vD.subVectors(vP, vL).normalize(), far) // nicht durch Wände: vor dem Treffer halten
+          // höchstens bis knapp außerhalb des Rauchs (~150 u): unter einem Dach blickt die Kamera dann durch die Wand, sieht aber den Smoke
+          if (hit < far) vP.copy(vL).addScaledVector(vD, Math.max(0.45 * far, hit - 0.4))
+        } else { worldToGltf(...v.pos, vP); worldToGltf(...v.look, vL) }
+        vQ.setFromRotationMatrix(vM.lookAt(vP, vL, camera.up))
+        const k = view.dur > 0 ? THREE.MathUtils.clamp((t - view.t0) / view.dur, 0, 1) : 1, w = k * k * (3 - 2 * k)
+        camera.position.lerpVectors(view.p0, vP, w); camera.quaternion.slerpQuaternions(view.q0, vQ, w)
+        fov = view.f0 + (CS2_VFOV - view.f0) * w
+      }
       if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix() }
       camera.updateMatrixWorld()
     }
@@ -380,12 +509,12 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       R.tracks.forEach((_, k) => { const i = d.frameBase[0] + k * n; if (d.flags[i] & FLAG.alive) { sx += d.x[i]; sy += d.y[i]; sz += d.z[i]; c++ } })
       if (c) { cam.x = sx / c - 600; cam.y = sy / c; cam.z = sz / c + 600 }
     }
-    const onKey = (e: KeyboardEvent) => { if (e.type === 'keydown') keys.add(e.code); else keys.delete(e.code) }
+    const onKey = (e: KeyboardEvent) => { if (e.type === 'keydown') { keys.add(e.code); onDirty?.() } else keys.delete(e.code) }
     const onBlur = () => keys.clear()
     const onDown = (e: PointerEvent) => { canvas.focus(); drag = true; px = e.clientX; py = e.clientY; canvas.setPointerCapture(e.pointerId) }
     const onMove = (e: PointerEvent) => {
       if (!drag) return
-      if (cam.mode === 'free') { cam.yaw -= (e.clientX - px) * LOOK; cam.pitch = THREE.MathUtils.clamp(cam.pitch + (e.clientY - py) * LOOK, -89, 89); dirty = true }
+      if (cam.mode === 'free') { cam.yaw -= (e.clientX - px) * LOOK; cam.pitch = THREE.MathUtils.clamp(cam.pitch + (e.clientY - py) * LOOK, -89, 89); touch() }
       px = e.clientX; py = e.clientY
     }
     const onUp = () => { drag = false }
@@ -460,7 +589,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       }
     }
 
-    let disposed = false, loadMs = 0, cpuMs = 0, first = true
+    let disposed = false, loadMs = 0, cpuMs = 0, first = true, marks: ReturnType<typeof createMarks> | null = null
     const setTime = (tick: number) => {
       if (disposed) return
       const now = performance.now(), gap = lastNow ? now - lastNow : 0
@@ -469,23 +598,30 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
       if (gap > 0 && gap < 100) { interval += (gap - interval) * 0.1; if (!tq) frameSample(gap, 20) } // ohne GPU-Timer: Bildabstand (vsync)
       const [r, t] = clampTick(tick)
       const roundChanged = r !== curRound
-      if (roundChanged) { curRound = r; deaths = deathsOf(r) }
+      if (roundChanged) {
+        curRound = r
+        let rs = roundState.get(r)
+        if (!rs) roundState.set(r, (rs = { deaths: deathsOf(r), phases: phasesOf(r) }))
+        deaths = rs.deaths; phases = rs.phases
+      }
       const dt = (t - lastTick) / rate, snap = roundChanged || !(dt >= 0 && dt < 0.5)
       if (snap) win.length = 0
       updateAgents(r, t, snap ? 0 : dt, snap)
       drops.update(t)
-      updateCamera(gap < 250 ? Math.min(0.1, gap / 1000) : 0) // erstes Bild nach langer Pause: Free-Cam nicht springen lassen
+      // erstes Bild nach langer Pause: Free-Cam nicht springen lassen; setView-Überblendung mit dem ungeklemmten Tick (auch nach Rundenende)
+      updateCamera(gap < 250 ? Math.min(0.1, gap / 1000) : 0, tick)
       const ls = Math.tan((camera.fov * D2R) / 2) / Math.tan((CS2_VFOV * D2R) / 2) // Schild-Größe unabhängig vom Scope-FOV
       for (const l of labels) l.sprite.scale.set(0.4 * ls, 0.1 * ls, 1)
-      // Sonnenschatten folgt dem Blickpunkt (nur Agenten werfen Schatten)
-      if (focusK >= 0 && cam.mode === 'ego') eye.copy(camera.position)
+      // Sonnenschatten folgt dem Blickpunkt (nur Agenten werfen Schatten); setView: um das Blickziel
+      if (view) eye.copy(vL)
+      else if (focusK >= 0 && cam.mode === 'ego') eye.copy(camera.position)
       else eye.copy(camera.position).addScaledVector(camera.getWorldDirection(fwd), 12)
       sun.target.position.copy(eye); sun.position.copy(eye).addScaledVector(toSun, 80)
       sun.target.updateMatrixWorld()
       effects.update(t)
       // Ego-Sicht: Arme + Waffe des Fokus-Spielers (Licht wie sein unsichtbarer Agent), Einstellungen/Skins/Handschuhe des Spielers
       vmShow = null
-      if (cam.mode === 'ego' && focusK >= 0) {
+      if (cam.mode === 'ego' && focusK >= 0 && !view) {
         const p = cam.focus, side = rounds[r].sides[focusK], st = vmStateAt(d, r, focusK, p, t, assets.weapons)
         if (st) {
           const s = samples[p], w = assets.weapons[st.def], sk = skins.weapon(s.skin, st.def, true)
@@ -504,7 +640,7 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
         }
       }
       // Zielfernrohr-Linse im Endpass, wenn das HUD das Scope zeichnet (Hud.tsx: gezoomt + Scharfschützengewehr + Fadenkreuz sichtbar)
-      const fs = cam.mode === 'ego' && focusK >= 0 ? samples[cam.focus] : null
+      const fs = cam.mode === 'ego' && focusK >= 0 && !view ? samples[cam.focus] : null
       post.setScope(fs && fs.flags & FLAG.scoped && shown('crosshair') && SNIPER.test(assets.weapons[fs.weapon]?.name ?? '') ? cssW / Math.max(1, cssH) : 0)
       render(t, gap / 1000)
       lastTick = t
@@ -527,7 +663,8 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
     scene.remove(warm)
     warm.traverse(o => { const m = (o as THREE.Mesh).material; if (m) for (const x of Array.isArray(m) ? m : [m]) x.dispose() })
     // Rauch/Feuer/Tracer cachen Treffer-Abstände: nie ohne Wände rechnen
-    ray = (await rayP) ?? ray
+    mapRay = await rayP
+    ray = mapRay ?? ray
     setTime(H.rounds[0].firstTick)
     gl.finish()
     loadMs = Math.round(performance.now() - t0)
@@ -543,8 +680,16 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
         } else if (cam.mode !== 'free') freeFromCamera() // schon frei (Start): Startposition über den Spielern behalten
         cam.mode = mode; dirty = true
       },
-      setOverlay(o) { overlay = o; dirty = true },
+      setOverlay(o) { overlay = o; touch() },
+      setMarks(m) { marks?.dispose(); marks = m && createMarks(scene, m); touch() },
+      setZoom(k) { if (k !== zoom) { zoom = k; dirty = true } },
+      setView(v, blendS = 0, t0 = lastTick) {
+        view = v && { v, t0, dur: blendS * rate, p0: camera.position.clone(), q0: camera.quaternion.clone(), f0: camera.fov }
+        dirty = true
+      },
       dirty: () => dirty || moving() || effects.pending() || post.adapting(),
+      get onDirty() { return onDirty },
+      set onDirty(f) { onDirty = f },
       resize(w, h) { cssW = w; cssH = h; applySize(); dirty = true },
       listener() {
         const f = camera.getWorldDirection(fwd)
@@ -566,9 +711,10 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
         skins.dispose()
         for (const q of queries) gl.deleteQuery(q)
         for (const l of labels) l.dispose()
+        marks?.dispose()
         // Vorlagen (nicht in der Szene) teilen Geometrie/Texturen mit den Klonen → alles einsammeln
         const disposables = new Set<{ dispose(): void }>()
-        const roots: THREE.Object3D[] = [scene, clipScene.scene, ...templates.values(), ...wScenes, ...gloveScenes.values(), ...vmRoots]
+        const roots: THREE.Object3D[] = [scene, ...clipScene ? [clipScene.scene] : [], ...templates.values(), ...wScenes, ...gloveScenes.values(), ...vmRoots]
         for (const root of roots) collect(root, disposables)
         for (const t of [map.lightmap, map.sky, flashTex, ...map.extra]) if (t) disposables.add(t)
         freeAll(disposables)
@@ -582,6 +728,8 @@ export const createEngine: CreateEngine = async (canvas, assets, data, onProgres
   }
 }
 
+/** onUpload-Rückruf (three-Muster): CPU-Kopie eines Puffers nach dem Hochladen freigeben; der Puffer darf danach nie mehr gelesen oder geändert werden */
+function freeArray(this: { array: unknown }) { this.array = null }
 /** Mündungsfeuer der Ego-Waffe: heller Kern mit sechs Strahlen (additiv) */
 function muzzleTexture() {
   const c = document.createElement('canvas'); c.width = c.height = 128

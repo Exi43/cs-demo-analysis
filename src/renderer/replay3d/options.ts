@@ -7,7 +7,7 @@
 /** einzeln verbergbare HUD-Teile (Zahnrad → UI elements) */
 export type UiElement = 'scoreboard' | 'teams' | 'minimap' | 'killfeed' | 'panel' | 'labels' | 'crosshair'
 /** Bilder/s, 0 = ohne Limit */
-export type FpsCap = 0 | 30 | 60 | 120
+export type FpsCap = 0 | 15 | 30 | 60 | 120
 
 export interface Replay3DOptions {
   /** X-Ray-Umrisse durch Wände und Rauch, dazu das Schadens-Blinken (früher eigene Option 'damage', gespeicherte Werte werden ignoriert) */
@@ -26,8 +26,8 @@ export interface Replay3DOptions {
   /** reine Render-Option, wirkt sofort (engine/index.ts applyLow): Render-Skala, MSAA, Bloom, Schatten, Granaten-Kamera, Effekt-Lichter */
   lowQuality: boolean
   fpsCap: FpsCap
-  /** Limit ohne Fensterfokus */
-  fpsCapUnfocused: FpsCap
+  /** Limit ohne Fensterfokus (z. B. Spiel auf dem anderen Monitor); hieß bis 28.10. fpsCapUnfocused (30, ohne Menü): gespeicherte Werte gelten nicht mehr */
+  fpsCapBackground: FpsCap
   ui: Record<UiElement, boolean> & { demobarAutoHide: boolean }
   /** alles verbergen (sauberes Bild) */
   hideAll: boolean
@@ -35,7 +35,7 @@ export interface Replay3DOptions {
 
 export const DEFAULT_OPTIONS: Readonly<Replay3DOptions> = {
   xray: false, nadeTrails: true, impacts: false, nadeCam: false, showKeys: false, voice: true, volume: 0.8,
-  lowQuality: false, fpsCap: 60, fpsCapUnfocused: 30,
+  lowQuality: false, fpsCap: 60, fpsCapBackground: 15,
   ui: { scoreboard: true, teams: true, minimap: true, killfeed: true, panel: true, labels: true, crosshair: true, demobarAutoHide: false },
   hideAll: false,
 }
@@ -43,7 +43,7 @@ export const DEFAULT_OPTIONS: Readonly<Replay3DOptions> = {
 export type OptionsPatch = Partial<Omit<Replay3DOptions, 'ui'>> & { ui?: Partial<Replay3DOptions['ui']> }
 
 const KEY = 'csda.replay3d.options.v1'
-const FPS: unknown[] = [0, 30, 60, 120]
+const FPS: unknown[] = [0, 15, 30, 60, 120]
 const obj = (v: unknown) => (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
 const valid = (k: string, v: unknown, def: unknown) =>
   typeof v === typeof def && (typeof v !== 'number' || (k.startsWith('fpsCap') ? FPS.includes(v) : v >= 0 && v <= 1))
@@ -69,8 +69,11 @@ function fromHash(hash: string): Record<string, unknown> | null {
 
 let saved = merge(DEFAULT_OPTIONS, (() => { try { return JSON.parse(localStorage.getItem(KEY) ?? 'null') } catch { return null } })())
 const override = fromHash(globalThis.location?.hash ?? '')
-let cur = override ? merge(saved, override) : saved
+/** base = gespeichert + Selbsttest-Override; temp = Utility-Vorschau (tempOptions) darüber */
+let base = override ? merge(saved, override) : saved, temp: OptionsPatch | null = null
+let cur = base
 const subs = new Set<(o: Replay3DOptions) => void>()
+const apply = () => { cur = temp ? merge(base, temp) : base; for (const cb of subs) cb(cur) }
 
 /** gleiches Objekt bis zur nächsten Änderung (für useSyncExternalStore) */
 export const getOptions = (): Readonly<Replay3DOptions> => cur
@@ -78,10 +81,13 @@ export const getOptions = (): Readonly<Replay3DOptions> => cur
 /** übernimmt gültige Werte, speichert (ohne Selbsttest-Override) und benachrichtigt */
 export function setOptions(p: OptionsPatch) {
   saved = merge(saved, p)
-  cur = override ? merge(cur, p) : saved
+  base = override ? merge(base, p) : saved
   try { localStorage.setItem(KEY, JSON.stringify(saved)) } catch { /* privater Modus/voll: nur für diese Sitzung */ }
-  for (const cb of subs) cb(cur)
+  apply()
 }
+
+/** Werte nur solange gesetzt, bis tempOptions(null) (Utility-Vorschau: ohne Schilder/X-Ray/Granaten-Kamera); nie gespeichert */
+export function tempOptions(p: OptionsPatch | null) { temp = p; apply() }
 
 export function onOptions(cb: (o: Replay3DOptions) => void): () => void {
   subs.add(cb)

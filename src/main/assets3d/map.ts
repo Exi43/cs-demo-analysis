@@ -1,8 +1,8 @@
 // Map-Pipeline (Port von spike/mapopt/final/pipeline): CS2-Map → GLB (meshopt, WebP, Sonden-Attribut) + Lightmap-WebP
 // + Himmel + Einstellungen + Boden-Raster (Schritte) + Sonden-Raster (Agenten-Licht, Critic P0-2). Alles nacheinander, nur der
-// 3D-Skybox-Export läuft als eigener VRF-Prozess im Hintergrund (skyboxJob).
-import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from 'node:fs'
+// 3D-Skybox-Export läuft als eigener VRF-Prozess im Hintergrund (skyboxJob); wartet die 3D-Ansicht (isFast), laufen auch Himmel und
+// Zusatztexturen nebeneinander (prepMap).
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ImageUtils, Logger, NodeIO, type Document, type Material, type Texture } from '@gltf-transform/core'
 import { ALL_EXTENSIONS, KHRMaterialsUnlit, KHRTextureBasisu } from '@gltf-transform/extensions'
@@ -11,13 +11,18 @@ import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer'
 import sharp from 'sharp'
 import { DataUtils, HalfFloatType } from 'three'
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js'
-import type { AssetProfile, CSDABlend, MapSettings, StationaryLight } from '../../shared/assets3d.ts'
+import type { AssetProfile, CSDABlend, CSDAFx, MapSettings, StationaryLight } from '../../shared/assets3d.ts'
 import { colorAdjust } from '../../shared/coloradjust.ts'
 import { CSDA, CS2Material, CSDAMaterialsCS2 } from './csda-ext.ts'
-import { vrf, writeAtomic, type CS2 } from './cs2.ts'
+import { fast, images, isFast, vrf, vrfAsync, writeAtomic, type CS2 } from './cs2.ts'
 import { BC6H, bc6h, ktx2, readVtex } from './vtex.ts'
 
 export interface Ctx { cs2: CS2; exe: string; log: string; step(f: number, msg: string): void }
+/** sharp für textureCompress (startet alle Texturen auf einmal): gleichzeitige Aufträge über images (cs2.ts) begrenzt */
+export const sharpLimited = ((input?: any, o?: any) => {
+  const s = sharp(input, o), toBuffer = s.toBuffer.bind(s) as (...a: unknown[]) => Promise<Buffer>
+  return Object.assign(s, { toBuffer: (...a: unknown[]) => images.run(() => toBuffer(...a)) })
+}) as typeof sharp
 
 /**
  * Map-Cache-Version (prepare.ts hängt sie an den Map-Schlüssel): 2 = native BCn-Texturen, 3 = Farbe 1024, glTF mit Texturdateien,
@@ -25,8 +30,11 @@ export interface Ctx { cs2: CS2; exe: string; log: string; step(f: number, msg: 
  * 5 = Blend-Layer (environment_blend, simple_2way, F_FANCY_BLENDING, _BLEND VEC4), Mod2x-Overlays, Lightmap-UV (0, 0) → Sonde, Karten-Sonde beidseitig,
  * 6 = stationäre Lichter (settings.stationary + dls.webp); Overlays zurück auf die Fläche (VRF_OVERLAY_PUSH), Draw-Call-Tönung linear,
  *     Positionen szenenweit quantisiert, Karten-Sonde sucht unter 0,1, einfarbige Basis bei Tint-Maske/Layer 2
+ * 7 = Himmel/Skyline wie CS2: csgo_unlitgeneric F_BLEND_MODE (Dust2-Wolken additiv statt olivgrauer Decke, Cache-Pylonen Alpha-Test), g_bFogEnabled 0 →
+ *     'nofog'; 3D-Skybox mit eigener Lightmap + Sonden, csgo_effects (Wolken, Sonnenscheiben, Dunst: ext.fx + Masken), Draw-Call-Tönung wie die
+ *     Map (node000_…) und skybox.ownFog
  */
-export const MAP_VERSION = 6
+export const MAP_VERSION = 7
 /** Sichtbarkeit der stationären Lichter (bakeLightmap outDls), neben der Lightmap */
 const DLS_FILE = 'dls.webp'
 /**
@@ -44,10 +52,11 @@ const FLOOR_CELL = 32
 
 /**
  * Dateinamen relativ zum Map-Ordner. skyHdr = Radiance-.hdr (gleiche Skala wie sky), lut = lut.bin (32³ RGB8, r schnellste Achse),
- * skybox = 3D-Skybox-Welt ohne Lightmap (eigener Ordner mit tex/), Map-Position = (Skybox-Position − origin) · scale (Source-u).
+ * skybox = 3D-Skybox-Welt (eigener Ordner mit tex/) mit ihrer gebackenen Lightmap (lightmap, fehlt → Himmelslicht), Map-Position =
+ * (Skybox-Position − origin) · scale (Source-u).
  */
 export interface MapBuild {
-  glb: string; lightmap: string; sky?: string; skyHdr?: string; lut?: string; skybox?: { glb: string; scale: number; origin: [number, number, number] }
+  glb: string; lightmap: string; sky?: string; skyHdr?: string; lut?: string; skybox?: { glb: string; scale: number; origin: [number, number, number]; lightmap?: string; ownFog?: boolean }
   floor: string; probes: string; settings: MapSettings; stats: Record<string, unknown>
 }
 
@@ -72,7 +81,7 @@ export async function buildMap(c: Ctx, map: string, profile: AssetProfile, out: 
   const probes = await loadProbes(prep.lmDir, prep.ents); lap('probes_load')
   c.step(0.5, 'Optimizing map geometry')
   const glb = `${map}.gltf`
-  const rep = await optimizeMap({ in: prep.gltf, out: join(out, glb), extra: prep.extra, probes, simplify: P.simplify, tex: P.tex, native: P.native, mapVpk: prep.mapVpk, work }, c); lap('optimize')
+  const rep = await optimizeMap({ in: prep.gltf, out: join(out, glb), extra: await prep.extra, probes, simplify: P.simplify, tex: P.tex, native: P.native, mapVpk: prep.mapVpk, work }, c); lap('optimize')
   c.step(0.95, 'Building floor and light grids')
   const grid = floorGrid(prep.physGlb)
   writeAtomic(join(out, 'floor.bin'), grid.bin)
@@ -83,14 +92,17 @@ export async function buildMap(c: Ctx, map: string, profile: AssetProfile, out: 
   try { // optional: ohne 3D-Skybox nur Himmel
     const sb = prep.skybox, ex = sb && await sb.job
     if (ex) {
-      // ohne Lightmap/Sonden, halbe Texturen
+      // halbe Texturen; Licht wie CS2 aus der eigenen gebackenen Lightmap + Sonden der Skybox-Welt (sonst Himmelslicht: Skyline zu blau/hell)
       const half = (o: Record<string, number>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v / 2]))
       mkdirSync(join(out, 'skybox'), { recursive: true })
+      const lmOk = await bakeLightmap(ex.lm, join(out, 'skybox', 'skybox_lm.webp'), P.lightmap / 4).then(() => true, () => false)
+      const sbProbes = await loadProbes(ex.lm, sb.ents).catch(() => null)
       skyRep = await optimizeMap({
-        in: ex.gltf, out: join(out, 'skybox', 'skybox.gltf'), extra: ex.extra, probes: null, noLightmap: true,
+        in: ex.gltf, out: join(out, 'skybox', 'skybox.gltf'), extra: ex.extra, probes: sbProbes, noLightmap: !lmOk, effects: true,
         simplify: P.simplify * 2, tex: half(P.tex) as typeof P.tex, native: half(P.native) as typeof P.native, mapVpk: sb.vpk, work: sb.work,
       }, { ...c, step: () => {} })
-      skybox = { glb: 'skybox/skybox.gltf', scale: sb.scale, origin: sb.origin }
+      const ownFog = sb.ents.some(e => /^env_(cubemap|gradient)_fog$/.test(e.classname) && !on(e.startdisabled))
+      skybox = { glb: 'skybox/skybox.gltf', scale: sb.scale, origin: sb.origin, ...lmOk && { lightmap: 'skybox/skybox_lm.webp' }, ...ownFog && { ownFog } }
     }
   } catch (e) { skyRep = { error: String(e) } }
   lap('skybox')
@@ -109,20 +121,31 @@ async function prepMap(c: Ctx, map: string, work: string) {
   const sub = (d: string) => { const p = join(work, d); mkdirSync(p, { recursive: true }); return p }
   const run = (args: string[]) => vrf(c.exe, args, c.log)
   const tryRun = (args: string[]) => { try { run(args) } catch {} }
-  c.step(0, 'Exporting map geometry')
-  const gltf = join(work, 'export', 'maps', map, 'world.gltf')
-  run(['-i', mapVpk, '-f', `maps/${map}/world.vwrld_c`, '-o', sub('export'), '-d', '--gltf_export_format', 'gltf', '--gltf_export_materials', '--gltf_textures_adapt', '--game', c.cs2.gi])
-  if (!existsSync(gltf)) throw new Error(`Map export failed: ${gltf} missing. Log: ${c.log}`)
-  c.step(0.18, 'Exporting lightmaps and entities')
   // nur die gebrauchten Texturen. irradiance (BC6H 8192²) roh, bakeLightmap dekodiert selbst: VRF -d brauchte dafür 6.3 GB RAM
   const lmDir = join(work, 'lm', 'maps', map, 'lightmaps')
   run(['-i', mapVpk, '-f', `maps/${map}/lightmaps/irradiance.vtex_c`, '-o', sub('lm')])
   const bc = existsSync(join(lmDir, 'irradiance.vtex_c')) && readVtex(readFileSync(join(lmDir, 'irradiance.vtex_c')))?.format === BC6H
-  for (const f of [...(bc ? [] : ['irradiance']), 'direct_light_shadows', 'env_light_probe_volume_atlas', 'env_light_probe_volume_atlas_dlshd'])
-    (f.startsWith('env_') ? tryRun : run)(['-i', mapVpk, '-f', `maps/${map}/lightmaps/${f}.vtex_c`, '-o', sub('lm'), '-d'])
-  run(['-i', mapVpk, '-f', `maps/${map}/entities/default_ents.vents_c`, '-o', sub('ents'), '-d'])
-  // Physik-Mesh mit SurfaceProperty je Knoten (Untergrund für Schritte); VRF schreibt <name>_physics.glb
-  run(['-i', mapVpk, '-f', `maps/${map}/world_physics.vmdl_c`, '-o', sub('phys'), '-d', '--gltf_export_format', 'glb'])
+  // Lightmaps, Entities, Physik-Mesh (SurfaceProperty je Knoten = Untergrund für Schritte; VRF schreibt <name>_physics.glb). Im Vordergrund
+  // neben dem Geometrie-Export (eigene Prozesse, ~1 GB, fertig vor dessen RAM-Spitze): Ancient 78 → 64 s, Spitze 5,2 GB wie allein (gemessen)
+  const lmJob = async () => {
+    for (const f of [...(bc ? [] : ['irradiance']), 'direct_light_shadows', 'env_light_probe_volume_atlas', 'env_light_probe_volume_atlas_dlshd'])
+      await vrfBg(c, ['-i', mapVpk, '-f', `maps/${map}/lightmaps/${f}.vtex_c`, '-o', sub('lm'), '-d']).catch(e => { if (!f.startsWith('env_')) throw e })
+    await vrfBg(c, ['-i', mapVpk, '-f', `maps/${map}/entities/default_ents.vents_c`, '-o', sub('ents'), '-d'])
+    await vrfBg(c, ['-i', mapVpk, '-f', `maps/${map}/world_physics.vmdl_c`, '-o', sub('phys'), '-d', '--gltf_export_format', 'glb'])
+  }
+  // Hintergrund: erst nach dem Geometrie-Export; wartet die 3D-Ansicht (auch erst mittendrin, fast), sofort
+  let geoDone!: () => void
+  const lmP = Promise.race([fast, new Promise<void>(r => (geoDone = r))]).then(lmJob)
+  lmP.catch(() => {}) // Fehler kommt beim await unten
+  c.step(0, 'Exporting map geometry')
+  const gltf = join(work, 'export', 'maps', map, 'world.gltf')
+  // ohne weitere große Exporte daneben: sonst braucht VRF hier bis 7,7 statt 5 GB RAM (Texturen stauen sich, gemessen). Asynchron, damit lmJob
+  // daneben weiterläuft (dessen Physik-Export wartet als glTF-Export bis hierher, cs2.ts heavy)
+  await vrfBg(c, ['-i', mapVpk, '-f', `maps/${map}/world.vwrld_c`, '-o', sub('export'), '-d', '--gltf_export_format', 'gltf', '--gltf_export_materials', '--gltf_textures_adapt', '--game', c.cs2.gi])
+  geoDone()
+  if (!existsSync(gltf)) throw new Error(`Map export failed: ${gltf} missing. Log: ${c.log}`)
+  c.step(0.18, 'Exporting lightmaps and entities')
+  await lmP
   const entsFile = join(work, 'ents', 'maps', map, 'entities', 'default_ents.vents')
   const entsText = readFileSync(entsFile, 'utf8'), ents = parseEntities(entsText)
   const res = (key: string) => [...new Set([...entsText.matchAll(new RegExp(`^${key}\\s+resource_name:"([^"]+)"`, 'gm'))].map(m => m[1]))]
@@ -138,12 +161,18 @@ async function prepMap(c: Ctx, map: string, work: string) {
   // sichtbarer Himmel: aktives env_sky der Skybox-Welt vor dem der Map (Ancient/Anubis/Vertigo: Map-env_sky startdisabled;
   // Inferno/Train: zweites env_sky nur fürs Licht-Backen)
   const sky = activeSky([...sbEnts, ...ents]), skyMat = String(sky?.skyname ?? '').replace(/^resource_name:/, '').replaceAll('"', '')
-  // erste VPK, die die Datei hat (jeder VRF-Start kostet ~1,5 s)
-  const first = (path: string, dir: string, vpks: string[]) => { for (const v of vpks) if (!existsSync(join(work, dir, path))) tryRun(['-i', v, '-f', path + '_c', '-o', sub(dir), '-d']) }
-  if (skyMat) first(skyMat, 'sky', [c.cs2.pak, mapVpk, ...sbEnts.length ? [sbVpk!] : []])
-  for (const p of res('postprocessing')) first(p, 'post', [mapVpk, c.cs2.pak])
+  // erste VPK, die die Datei hat (jeder VRF-Start kostet ~1,5 s). Im Vordergrund Himmel (bis 3 GB) neben den Zusatztexturen
+  const first = async (path: string, dir: string, vpks: string[]) => { for (const v of vpks) if (!existsSync(join(work, dir, path))) await vrfBg(c, ['-i', v, '-f', path + '_c', '-o', sub(dir), '-d']).catch(() => {}) }
+  const skyP = (async () => {
+    if (skyMat) await first(skyMat, 'sky', [c.cs2.pak, mapVpk, ...sbEnts.length ? [sbVpk!] : []])
+    for (const p of res('postprocessing')) await first(p, 'post', [mapVpk, c.cs2.pak])
+  })()
+  await Promise.race([skyP, fast])
   c.step(0.24, 'Exporting extra textures')
-  const extra = await extraTextures(c, gltf, sub('extra'), mapVpk)
+  // Vordergrund: läuft neben Lightmap/Himmel/Sonden weiter (eigene Prozesse), buildMap wartet erst vor optimizeMap darauf
+  const extra = extraTextures(c, gltf, sub('extra'), mapVpk, isFast() ? a => vrfBg(c, a) : undefined)
+  extra.catch(() => {}) // Fehler kommt dort beim await
+  await skyP
   const files = walk(work)
   const physGlb = files.filter(f => /[\\/]phys[\\/].*\.glb$/i.test(f)).sort((a, b) => statSync(b).size - statSync(a).size)[0]
   if (!(bc || existsSync(join(lmDir, 'irradiance.exr'))) || !physGlb) throw new Error(`Map export incomplete (lightmap or physics missing). Log: ${c.log}`)
@@ -157,14 +186,8 @@ async function prepMap(c: Ctx, map: string, work: string) {
 
 const walk = (d: string): string[] => existsSync(d) ? readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]) : []
 
-/** vrf() ohne zu blockieren (eigener Prozess, läuft neben den vrf()-Aufrufen des Map-Exports); ohne AccessViolation-Wiederholung */
-const vrfBg = (c: Ctx, args: string[]) => new Promise<void>((ok, fail) => {
-  const fd = openSync(c.log, 'a')
-  try {
-    spawn(c.exe, [...args.map(a => a.replaceAll('\\', '/')), '--threads', '1'], { stdio: ['ignore', fd, fd], windowsHide: true })
-      .on('error', fail).on('exit', code => code === 0 ? ok() : fail(new Error(`Source 2 Viewer failed (${code}). Log: ${c.log}`)))
-  } finally { closeSync(fd) } // das Kind hat eine eigene Kopie des Handles
-})
+/** vrf() ohne zu blockieren (eigener Prozess, läuft neben den vrf()-Aufrufen des Map-Exports) */
+const vrfBg = (c: Ctx, args: string[]) => vrfAsync(c.exe, args, c.log)
 
 /**
  * 3D-Skybox-Welt (skybox_reference) samt Zusatztexturen im Hintergrund exportieren, sobald ihre Entities da sind: spart ~5–10 s Bauzeit,
@@ -178,30 +201,41 @@ function skyboxJob(c: Ctx, vpk: string, dir: string, ents: Ent[], work: string) 
   const job = (async () => {
     await vrfBg(c, ['-i', vpk, '-f', `${dir}/world.vwrld_c`, '-o', sub('export'), '-d', '--gltf_export_format', 'gltf', '--gltf_export_materials', '--gltf_textures_adapt', '--game', c.cs2.gi])
     const gltf = join(work, 'export', dir, 'world.gltf')
-    return existsSync(gltf) ? { gltf, extra: await extraTextures(c, gltf, sub('extra'), vpk, a => vrfBg(c, a)) } : null
+    if (!existsSync(gltf)) return null
+    // gebackene Beleuchtung der Skybox-Welt wie prepMap (irradiance roh, wenn BC6H; fehlt etwas → buildMap ohne Lightmap/Sonden)
+    const lm = join(work, 'lm', dir, 'lightmaps'), get = (f: string, d: boolean) => vrfBg(c, ['-i', vpk, '-f', `${dir}/lightmaps/${f}.vtex_c`, '-o', sub('lm'), ...d ? ['-d'] : []]).catch(() => {})
+    await get('irradiance', false)
+    const bc = existsSync(join(lm, 'irradiance.vtex_c')) && readVtex(readFileSync(join(lm, 'irradiance.vtex_c')))?.format === BC6H
+    await Promise.all([...(bc ? [] : ['irradiance']), 'direct_light_shadows', 'env_light_probe_volume_atlas', 'env_light_probe_volume_atlas_dlshd'].map(f => get(f, true)))
+    return { gltf, lm, extra: await extraTextures(c, gltf, sub('extra'), vpk, a => vrfBg(c, a), true) }
   })()
   job.catch(() => {}) // Fehler meldet erst buildMap (sonst unbehandelte Ablehnung, falls der Map-Bau vorher scheitert)
-  return { vpk, work, scale: +cam.scale, origin: origin.map(v => +v.toFixed(2)) as [number, number, number], job }
+  return { vpk, work, scale: +cam.scale, origin: origin.map(v => +v.toFixed(2)) as [number, number, number], ents, job }
 }
 
 /** Layer-Texturen der Blend-Shader (csgo_lightmappedgeneric F_LAYERS, csgo_simple_2way_blend, csgo_environment_blend) */
 const BLEND_TEX = ['g_tLayer2Color', 'g_tBlendModulation', 'g_tColorB', 'g_tMask', 'g_tColor2', 'g_tColor3', 'g_tHeight1', 'g_tHeight2', 'g_tHeight3']
 /** Wellen-Normalen: csgo_water_fancy g_tWavesNormalHeight, csgo_water g_tNormal */
 const WATER_NORMAL = ['g_tWavesNormalHeight', 'g_tNormal']
-/** Blend-Layer 2, Blend-Modulation, Tint-Masken und Wasser-Normalen aus den VMAT-Extras als PNG holen (pak01, dann Map-VPK) */
-async function extraTextures(c: Ctx, gltf: string, outDir: string, mapVpk: string, run = (a: string[]): void | Promise<void> => vrf(c.exe, a, c.log)) {
+/** Masken der csgo_effects (R-Kanal, je eigene Skala/Schwenk) */
+const FX_MASKS = ['g_tMask1', 'g_tMask2', 'g_tMask3']
+/**
+ * Blend-Layer 2, Blend-Modulation, Tint-Masken und Wasser-Normalen aus den VMAT-Extras als PNG holen (pak01, dann Map-VPK).
+ * fx (3D-Skybox): dazu Masken der csgo_effects und die .vmat der Effekt-/Unlit-Materialien (DynamicParams fehlen in VRFs glTF-Extras)
+ */
+async function extraTextures(c: Ctx, gltf: string, outDir: string, mapVpk: string, run = (a: string[]): void | Promise<void> => vrf(c.exe, a, c.log), fx = false) {
   const g = JSON.parse(readFileSync(gltf, 'utf8'))
   const want = new Set<string>()
   for (const m of g.materials ?? []) {
-    const tp = m.extras?.vmat?.TextureParams ?? {}, water = String(m.extras?.vmat?.ShaderName ?? '').startsWith('csgo_water')
-    for (const s of [...BLEND_TEX, 'g_tTintMask', ...water ? WATER_NORMAL : []]) if (tp[s]) want.add(String(tp[s]).toLowerCase())
+    const v = m.extras?.vmat ?? {}, tp = v.TextureParams ?? {}, shader = String(v.ShaderName ?? ''), water = shader.startsWith('csgo_water')
+    for (const s of [...BLEND_TEX, 'g_tTintMask', ...water ? WATER_NORMAL : [], ...fx ? FX_MASKS : []]) if (tp[s]) want.add(String(tp[s]).toLowerCase())
+    if (fx && /^csgo_(effects|unlitgeneric)\./.test(shader) && v.Name) want.add(String(v.Name).toLowerCase())
   }
-  const list = [...want].map(v => v + '_c')
-  for (const vpk of [c.cs2.pak, mapVpk]) for (let i = 0; i < list.length; i += 40) {
-    try { await run(['-i', vpk, '-d', '-o', outDir, '-f', list.slice(i, i + 40).join(',')]) } catch {}
-  }
+  const list = [...want].map(v => v + '_c'), parts = Array.from({ length: Math.ceil(list.length / 40) }, (_, i) => list.slice(i * 40, i * 40 + 40))
+  // Blöcke einer VPK gleichzeitig, wenn run asynchron ist (je ~0,3 GB); pak01 vor der Map-VPK (die gewinnt bei gleichem Pfad)
+  for (const vpk of [c.cs2.pak, mapVpk]) await Promise.all(parts.map(p => Promise.resolve().then(() => run(['-i', vpk, '-d', '-o', outDir, '-f', p.join(',')])).catch(() => {})))
   const found: Record<string, string> = {}
-  for (const v of want) { const png = join(outDir, v.replace(/\.vtex$/, '.png')); if (existsSync(png)) found[v] = png }
+  for (const v of want) { const f = join(outDir, v.endsWith('.vmat') ? v : v.replace(/\.vtex$/, '.png')); if (existsSync(f)) found[v] = f }
   return found
 }
 
@@ -240,6 +274,16 @@ const readExr = (file: string) => {
 const srgb8 = (v: number) => Math.round(255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055))
 /** VMAT-/Entity-Farbe (sRGB 0..1) → linear, 4 Stellen */
 const srgbLin = (c: number[]) => c.slice(0, 3).map(v => +(v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4).toFixed(4)) as [number, number, number]
+
+/**
+ * DynamicParams einer dekompilierten .vmat (VRF -d): "float2(a, b)" bzw. "frac(float2(a, b) * time())" → v = [a, b], time = hängt an der Zeit.
+ * shortcut: andere Ausdrücke → undefined (statischer Wert gilt); erst bei Bedarf einen Ausdrucks-Leser
+ */
+export function vmatDynamic(vmat: string, key: string): { v: [number, number]; time: boolean } | undefined {
+  const e = vmat.match(/"DynamicParams"\s*\{([^}]*)\}/)?.[1].match(new RegExp(`"${key}"\\s+"([^"]*)"`))?.[1]
+  const m = e?.match(/float2\(\s*([-\d.e]+)\s*,\s*([-\d.e]+)\s*\)/)
+  return m ? { v: [+m[1], +m[2]], time: e!.includes('time()') } : undefined
+}
 
 /** Farbkorrektur eines Layers (shared/coloradjust.ts, Formel der DLL wie bei den Handschuhen) als affine 3×4 (Zeilen, linear); null = neutral */
 export function layerAdjust(contrast: number, saturation: number, brightness: number, tint: number[], avg: number[]): number[] | null {
@@ -480,7 +524,8 @@ interface Probes { vols: unknown[]; sample(p: number[], n: number[], out: number
  */
 async function loadProbes(dir: string, ents: Ent[]): Promise<Probes | null> {
   const vols = ents.filter(e => e.classname === 'env_combined_light_probe_volume').map(e => {
-    const v = { o: e.origin as number[], mn: e.box_mins as number[], mx: e.box_maxs as number[], size: [+e.light_probe_size_x, +e.light_probe_size_y, +e.light_probe_size_z], at: [+e.light_probe_atlas_x, +e.light_probe_atlas_y, +e.light_probe_atlas_z] }
+    // vec: Skybox-Prefab-Entities haben origin als Text "x y z" (sonst Zeichen statt Zahlen → Nuke-Skybox schwarz)
+    const v = { o: vec(e.origin), mn: vec(e.box_mins), mx: vec(e.box_maxs), size: [+e.light_probe_size_x, +e.light_probe_size_y, +e.light_probe_size_z], at: [+e.light_probe_atlas_x, +e.light_probe_atlas_y, +e.light_probe_atlas_z] }
     return { ...v, wmn: v.mn.map((x, i) => x + v.o[i]), wmx: v.mx.map((x, i) => x + v.o[i]), vol: (v.mx[0] - v.mn[0]) * (v.mx[1] - v.mn[1]) * (v.mx[2] - v.mn[2]) }
   }).sort((a, b) => a.vol - b.vol) // kleinstes (detailliertestes) Volumen zuerst
   const files = readdirSync(dir)
@@ -548,8 +593,8 @@ const linSrgb = (v: number) => v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.
  * Rückgängig, die Fläche bekommt Tiefen-Versatz im Renderer (flags 'overlay'/'bias').
  */
 const VRF_OVERLAY_PUSH = 0.01 / 0.0254
-/** statische Welt-Meshes (keine Aggregate/Entities): ihre Tönung kommt aus dem Draw-Call (m_vTintColor, schon linear) */
-const STATIC_NODE = /^n\d+_lr\d+_c\d+_s_/
+/** statische Welt-Meshes (keine Aggregate/Entities): ihre Tönung kommt aus dem Draw-Call (m_vTintColor, schon linear); 3D-Skybox: node000_… */
+const STATIC_NODE = /^n(ode)?\d+_lr\d+_c\d+_s_/
 const isTool = (name: string) => /^materials\/tools\//i.test(name) || /(^|\/)(tools(nodraw|clip|trigger|skip|hint|invisible|blocklight|solidblocklight|playerclip|npcclip|blockbullets|areaportal|occluder|black|skybox|fog|light)|nodraw|playerclip|trigger)/i.test(name)
 
 interface OptOpts {
@@ -557,6 +602,8 @@ interface OptOpts {
   tex: typeof PROFILES.high.tex; native: typeof PROFILES.high.native; mapVpk: string; work: string
   /** Lightmap-UVs verwerfen (3D-Skybox: eigene Lightmap nicht exportiert) */
   noLightmap?: boolean
+  /** 3D-Skybox: csgo_effects behalten und Himmels-Effekte (ext.fx) schreiben; extra enthält dann auch Masken und .vmat */
+  effects?: boolean
 }
 
 async function optimizeMap(opt: OptOpts, c: Ctx) {
@@ -667,8 +714,9 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
     const v: any = (mat.getExtras() as any)?.vmat ?? {}
     const shader = String(v.ShaderName ?? '').replace(/\.vfx$/, '')
     const ip = v.IntParams ?? {}, fp = v.FloatParams ?? {}, tp = v.TextureParams ?? {}
-    // csgo_effects (Staub/Lichtschächte) brauchen Masken, die VRF nicht in Alpha packt → sichtbare Rechtecke → weg
-    const drop = isTool(v.Name ?? mat.getName()) || shader === 'csgo_effects'
+    // csgo_effects (Staub/Lichtschächte) brauchen Masken, die VRF nicht in Alpha packt → sichtbare Rechtecke → weg; 3D-Skybox: mit Masken (ext.fx)
+    const fx = shader === 'csgo_effects'
+    const drop = isTool(v.Name ?? mat.getName()) || (fx && !opt.effects)
     // wie VRF IsMaterialOverlay (VRF_OVERLAY_PUSH)
     const overlay = ip.F_OVERLAY === 1 || ip.F_DEPTHBIAS === 1 || ip.F_DEPTH_BIAS === 1 || shader.endsWith('static_overlay') || shader === 'citadel_overlay'
     kind.set(mat, { shader, drop, overlay })
@@ -684,8 +732,13 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
     else if (overlay) flags.push('bias') // F_DEPTHBIAS: nur Tiefen-Versatz, Alpha-Modus bleibt
     if (ip.F_TRANSLUCENT && mat.getAlphaMode() === 'OPAQUE') mat.setAlphaMode('BLEND')
     if (shader === 'csgo_black_unlit') { mat.setBaseColorFactor([0, 0, 0, 1]); mat.setExtension('KHR_materials_unlit', unlit.createUnlit()); flags.push('unlit') }
-    if (shader === 'csgo_unlitgeneric') { mat.setExtension('KHR_materials_unlit', unlit.createUnlit()); flags.push('unlit') }
-    if (ip.F_ADDITIVE_BLEND && shader !== 'csgo_effects') { mat.setAlphaMode('BLEND'); flags.push('additive') }
+    if (shader === 'csgo_unlitgeneric' || fx) { mat.setExtension('KHR_materials_unlit', unlit.createUnlit()); flags.push('unlit') }
+    // csgo_unlitgeneric F_BLEND_MODE (Features: Opaque, Translucent, Alpha Test, Mod2x, Additive, Multiply, ModThenAdd); Additiv: Ziel + Farbe · Alpha
+    const bm = shader === 'csgo_unlitgeneric' ? +ip.F_BLEND_MODE || 0 : 0
+    if (bm === 1 || fx) mat.setAlphaMode('BLEND')
+    if (bm === 2) mat.setAlphaMode('MASK').setAlphaCutoff(fp.g_flAlphaTestReference ?? 0.5)
+    if (ip.F_ADDITIVE_BLEND || bm === 4) { mat.setAlphaMode('BLEND'); flags.push('additive') }
+    if (ip.g_bFogEnabled === 0) flags.push('nofog')
     // Overlay F_BLEND_MODE 3 (Kaustik, Schmutz): Mod2x (Ziel × 2 × Farbe in Gamma, 0,5 = neutral) statt Alpha-Überblendung
     if (shader === 'csgo_static_overlay' && ip.F_BLEND_MODE === 3) {
       flags.push('mod2x')
@@ -722,6 +775,28 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
       const tm = (f[0] < 0.999 || f[1] < 0.999 || f[2] < 0.999) && extraTexture(tp.g_tTintMask) // nur wenn wirklich eingefärbt
       if (tm) { cs.setTintMask(tm); used = true; stats.tint++ }
     }
+    // 3D-Skybox: Himmels-Effekte (CSDAFx); Unlit-Wolken mit zweiter Textur und DynamicParams aus der .vmat (Dust2: Skala 3,5, Schwenk 0,002/s)
+    if (opt.effects && (fx || shader === 'csgo_unlitgeneric')) {
+      const vp = v.VectorParams ?? {}, two = (k: string, d: [number, number]): [number, number] => Array.isArray(vp[k]) ? [vp[k][0], vp[k][1]] : d
+      const vf = opt.extra[String(v.Name ?? '').toLowerCase()], vmat = vf ? readFileSync(vf, 'utf8') : ''
+      const off = vmatDynamic(vmat, 'g_vTexCoordOffset'), scroll = off?.time ? off.v : two('g_vTexCoordScrollSpeed', [0, 0])
+      const scale = fx ? [1, 1] : vmatDynamic(vmat, 'g_vTexCoordScale')?.v ?? two('g_vTexCoordScale', [1, 1])
+      const c2 = !fx && ip.F_TWOTEXTURE ? tex(tp.g_tColor2) : null
+      const masks = fx ? FX_MASKS.map(k => tp[k] && !/default_mask/i.test(tp[k]) ? extraTexture(tp[k]) : null) : []
+      masks.forEach((t, i) => { if (t) cs.setTex(`mask${i + 1}Texture` as 'mask1Texture', t) })
+      if (c2) cs.setTex('color2Texture', c2)
+      // Fresnel/Abstand nur, wenn nicht neutral (Exponent ≈ 0 bzw. Distanz ≈ 0 u ergeben das Maximum)
+      const fres: CSDAFx['fresnel'] = [fp.g_flFresnelExponent ?? 0, fp.g_flFresnelFalloff ?? 1, fp.g_flFresnelMin ?? 0, fp.g_flFresnelMax ?? 1]
+      const fade: CSDAFx['fade'] = [+((fp.g_flFadeDistance ?? 0) * S).toFixed(3), fp.g_flFadeFalloff ?? 1, fp.g_flFadeMin ?? 0, fp.g_flFadeMax ?? 1]
+      cs.setFx({
+        uv: [...scale, ...scroll] as CSDAFx['uv'], ...c2 && { uv2: two('g_vTex2CoordScale', [1, 1]) },
+        boost: fx ? fp.g_flColorBoost ?? 1 : 1, opacity: fx ? fp.g_flOpacityScale ?? 1 : 1,
+        ...masks.some(Boolean) && { masks: FX_MASKS.map((_, i) => [...two(`g_vMask${i + 1}Scale`, [1, 1]), ...two(`g_vMask${i + 1}PanSpeed`, [0, 0])] as [number, number, number, number]) },
+        ...fx && (fres[0] > 0.01 || fres[1] < 1 || fres[3] !== 1) && { fresnel: fres },
+        ...fx && (fade[0] > 0.1 || fade[3] !== 1) && { fade },
+      })
+      used = true; stats.fx = (stats.fx ?? 0) + 1
+    }
     if (flags.length) { cs.setFlags(flags); used = true }
     if (used) mat.setExtension(CSDA, cs)
   }
@@ -738,8 +813,8 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
       for (let i = 0, p = [0, 0, 0], n = [0, 0, 0]; i < pos.getCount(); i++) { pos.getElement(i, p); nor.getElement(i, n); pos.setElement(i, p.map((x, j) => x - n[j] * VRF_OVERLAY_PUSH)) }
       stats.overlaysBack = (stats.overlaysBack ?? 0) + 1
     }
-    // Vertex-Farbe nur bei Overlays (Deckkraft); bei csgo_foliage sind es Windgewichte (sonst lila Laub)
-    if (prim.getAttribute('COLOR_0') && k.shader !== 'csgo_static_overlay') prim.setAttribute('COLOR_0', null)
+    // Vertex-Farbe nur bei Overlays und Effekten (Deckkraft); bei csgo_foliage sind es Windgewichte (sonst lila Laub)
+    if (prim.getAttribute('COLOR_0') && k.shader !== 'csgo_static_overlay' && k.shader !== 'csgo_effects') prim.setAttribute('COLOR_0', null)
     const t4 = prim.getAttribute('_TEXCOORD_4'), soft = blendSoft.get(mat!)
     if (t4) {
       if (soft) { // Vertex-Malerei (VertexPaintBlendParams) → _BLEND: x Layer 2, y Layer 3, w Weichheit (height: + g_flBlendSoftness2/3 wie der CS2-Vertex-Shader)
@@ -789,7 +864,7 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
   // Props ohne Lightmap: CS2-Sonden pro Vertex backen, _PROBE = (sqrt(irr/4) rgb, Sonne) als UNSIGNED_BYTE normalisiert
   if (opt.probes) {
     c.step(0.68, 'Baking light probes')
-    const skip = new Set(['csgo_static_overlay', 'csgo_black_unlit', 'generic'])
+    const skip = new Set(['csgo_static_overlay', 'csgo_black_unlit', 'generic', 'csgo_unlitgeneric', 'csgo_effects'])
     const o = [0, 0, 0, 0], o2 = [0, 0, 0, 0], p = [0, 0, 0], nn = [0, 0, 0], ps = [0, 0, 0], ns = [0, 0, 0]
     let nVerts = 0
     for (const node of root.listNodes()) {
@@ -842,9 +917,9 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
     stats.probeVerts = nVerts
   }
   // TEXCOORD_1 (Lightmap) und _BLEND sind keine Textur-UVs → keepAttributes
-  // prune faltet einfarbige Basisfarben in den Faktor; Tint-Maske/Layer 2 rechnet der Renderer nur mit map → als 1×1 zurück
-  // (Nuke hazard_stripe_002_trim: sonst weißes statt rot-weißes Band)
-  const solidKeep = root.listMaterials().flatMap(m => { const e = m.getExtension<CS2Material>(CSDA); return m.getBaseColorTexture() && (e?.getTintMask() || e?.getLayer2()) ? [[m, m.getBaseColorFactor()] as const] : [] })
+  // prune faltet einfarbige Basisfarben in den Faktor; Tint-Maske/Layer 2/Effekt-Masken rechnet der Renderer nur mit map → als 1×1 zurück
+  // (Nuke hazard_stripe_002_trim: sonst weißes statt rot-weißes Band; Dust2-Dunst: Basis 1×1 weiß, ohne map keine Masken)
+  const solidKeep = root.listMaterials().flatMap(m => { const e = m.getExtension<CS2Material>(CSDA); return m.getBaseColorTexture() && (e?.getTintMask() || e?.getLayer2() || e?.getFx()) ? [[m, m.getBaseColorFactor()] as const] : [] })
   await doc.transform(prune({ keepAttributes: true, keepLeaves: false, keepSolidTextures: false }))
   for (const [m, f0] of solidKeep) if (!m.getBaseColorTexture()) {
     const f = m.getBaseColorFactor(), c = [0, 1, 2].map(k => Math.round(255 * linSrgb(f0[k] > 1e-6 ? Math.min(1, f[k] / f0[k]) : 1)))
@@ -860,7 +935,7 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
   for (const t of new Set(noAlpha))
     if (t?.getMimeType() === 'image/png') t.setImage(await sharp(t.getImage()!).removeAlpha().png().toBuffer())
   const T = opt.tex
-  const tc = (slots: RegExp, size: number, quality: number) => textureCompress({ encoder: sharp, targetFormat: 'webp', formats: /png|jpe?g/, slots, resize: [size, size], quality })
+  const tc = (slots: RegExp, size: number, quality: number) => textureCompress({ encoder: sharpLimited, targetFormat: 'webp', formats: /png|jpe?g/, slots, resize: [size, size], quality })
   await doc.transform(
     tc(/^(baseColorTexture|emissiveTexture)$/, T.color, Q.color),
     tc(/^layer[23]BaseColorTexture$/, T.layer2, Q.color),
@@ -869,7 +944,7 @@ async function optimizeMap(opt: OptOpts, c: Ctx) {
     tc(/^(blendModulationTexture|height[123]Texture)$/, T.blendmod, Q.orm),
     tc(/^tintMaskTexture$/, T.tint, Q.orm),
     // Rest (Texturen ohne gezielten Slot)
-    textureCompress({ encoder: sharp, targetFormat: 'webp', formats: /png|jpe?g/, resize: [T.color, T.color], quality: Q.color }),
+    textureCompress({ encoder: sharpLimited, targetFormat: 'webp', formats: /png|jpe?g/, resize: [T.color, T.color], quality: Q.color }),
   )
   c.step(0.9, 'Compressing meshes')
   // Positionen auf einem Raster für die ganze Szene (16 Bit): je Mesh (Standard, 14 Bit) rasten gemeinsame Kanten verschiedener Meshes

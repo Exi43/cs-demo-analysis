@@ -78,9 +78,12 @@ function columns(res: any): { n: number; col: (k: string) => any[] } {
   return { n, col: k => res[k] ?? [] }
 }
 
+/** Match-ID: SHA-1 über das erste MB der entpackten Demo + Länge (dieselbe Demo hat dieselbe ID, auch gepackt) */
+export const demoId = (buf: Buffer) => createHash('sha1').update(buf.subarray(0, 1 << 20)).update(String(buf.length)).digest('hex').slice(0, 16)
+
 export function parseDemo(raw: Buffer, fileName: string, progress: Progress = () => {}): MatchData {
   const buf = readDemoBuffer(raw)
-  const id = createHash('sha1').update(buf.subarray(0, 1 << 20)).update(String(buf.length)).digest('hex').slice(0, 16)
+  const id = demoId(buf)
 
   progress(5, 'Reading header')
   const header = dp.parseHeader(buf) ?? {}

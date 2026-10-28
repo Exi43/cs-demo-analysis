@@ -4,7 +4,7 @@
 // Abbruch nur über FLAG.defusing (kein Event); X VS Y ab dem ersten Tod; Captain = Spieler mit Namen = Teamname ohne 'team_';
 // Slots CT 1–5 / T 6–10 nach user_id (HudTrack), sonst Match-Reihenfolge. Ohne HudTrack (alter Import): Inventar bei
 // Freeze-Ende minus Würfe, Kaufzeit 20 s ab Freeze-Ende, Reserve null.
-import { EV, FLAG, flashAt, upperBound, type CS3D } from '../../../shared/cs3d'
+import { EV, FLAG, flashAt, flashLeft, upperBound, type CS3D } from '../../../shared/cs3d'
 import { at, type Avatars, type HudRound, type HudTrack } from '../../../shared/hud'
 import { FRAME_STEP, type Kill, type MatchData, type NadeType, type Round, type Side } from '../../../shared/model'
 import type { Replay3DData } from '../contracts'
@@ -34,6 +34,15 @@ const NADES = ['Flashbang', 'Smoke Grenade', 'High Explosive Grenade', 'Molotov'
 const THROWN: Record<NadeType, string[]> = {
   smoke: ['Smoke Grenade'], flash: ['Flashbang'], he: ['High Explosive Grenade'], molotov: ['Molotov', 'Incendiary Grenade'], decoy: ['Decoy Grenade'],
 }
+
+/** CS2-Ortsnamen, die nicht der CamelCase-Zerlegung folgen (resource/csgo_english.txt, Patch 2000935: 16 von 373) */
+const PLACES: Record<string, string> = {
+  CTSpawn: 'CT Start', TSpawn: 'T Start', TopofMid: 'Top of Mid', BackofA: 'Back of A', BackofB: 'Back of B', SnipersNest: "Sniper's Nest",
+  VipRescueZone: 'VIP Rescue Zone', Control: 'Control Room', Floor50: '50th Floor', Floor51: '51st Floor', MotorBoats: 'Motorboats',
+  BoatHouse: 'Boathouse', DriveWay: 'Driveway', PopDog: 'Popdog', LongDog: 'Longdog', Gravelpit: 'Gravel Pit',
+}
+/** last_place_name so, wie CS2 ihn zeigt: 'TSpawn' → 'T Start', 'BombsiteA' → 'Bombsite A', 'Villa1stFloor' → 'Villa 1st Floor' */
+export const placeName = (p: string) => PLACES[p] ?? p.replace(/(?<=[a-z])(?=[A-Z\d])|(?<=[A-Z])(?=[A-Z][a-z])/g, ' ')
 
 /** Hauptwaffe: Primär > Pistole */
 const main = (defs: readonly number[]) => ITEM[defs.find(d => PRIMARY.has(d)) ?? defs.find(d => PISTOL.has(d)) ?? 0] ?? ''
@@ -198,6 +207,11 @@ export function hudView(data: Replay3DData, track: HudTrack | null, tick: number
       flash: alive && p3 !== undefined ? flashAt(d, p3, tick) : 0, avatar: avatars[sid] ?? null,
     }
   }).sort((a, b) => a.slot - b.slot)
+  // Sprecher in Sprech-Reihenfolge (wer zuerst anfing, zuerst) mit Ort aus v1 (last_place_name je Frame); Fremde (Coach, Zuschauer) fehlen
+  const voice = speaking.flatMap(sid => {
+    const p = players.find(x => x.steamid === sid), tr = R.tracks.find(x => x.steamid === sid)
+    return p && tr ? [{ ...p, place: placeName(R.places[tr.place[f]] ?? '') }] : []
+  })
 
   // Defuse: letztes bomb_begindefuse, solange der Spieler FLAG.defusing hat (Abbruch hat kein Event)
   let defuse: HudView['defuse']
@@ -238,7 +252,7 @@ export function hudView(data: Replay3DData, track: HudTrack | null, tick: number
       money: fp.money, voice: fp.speaking,
     }
     const p3 = X.p3.get(fp.steamid)
-    if (i >= 0 && p3 !== undefined) fo = { steamid: fp.steamid, keys: keysAt(d, fp.steamid, tick), scoped: !!(d.flags[i] & FLAG.scoped), fov: d.fov[i] || 90, flash: flashAt(d, p3, tick) }
+    if (i >= 0 && p3 !== undefined) fo = { steamid: fp.steamid, keys: keysAt(d, fp.steamid, tick), scoped: !!(d.flags[i] & FLAG.scoped), fov: d.fov[i] || 90, flash: flashAt(d, p3, tick), flashLeft: flashLeft(d, p3, tick) }
   }
 
   return {
@@ -247,7 +261,7 @@ export function hudView(data: Replay3DData, track: HudTrack | null, tick: number
     clock: t < R.freezeEndTick ? (R.freezeEndTick - t) / rate : planted ? left : Math.max(0, ROUND_S - (t - R.freezeEndTick) / rate),
     bomb: { planted, site: planted ? R.plant!.site : undefined, left, total: planted ? BOMB_S : 0 },
     defuse, vs: players.some(p => !p.alive) ? { ct: alive('CT'), t: alive('T') } : undefined,
-    players, panel, killfeed, focus: fo,
+    players, panel, killfeed, focus: fo, voice,
   }
 }
 

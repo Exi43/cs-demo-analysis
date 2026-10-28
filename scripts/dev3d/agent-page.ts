@@ -562,7 +562,7 @@ W.step = async (name: string, a: any = {}) => {
         if (dead) { let i = fi; while (i > 0 && !(d.flags[fb + i] & FLAG.alive)) i--; if (!(d.flags[fb + i] & FLAG.alive)) continue; t = Rd.firstTick + i * d.header.frameStep }
         const mm = await mk(old, url, side, p, t)
         poseAt(mm.a, p, t, true, true)
-        if (dead) mm.a.fall(1, new THREE.Vector3(1, 0, 0))
+        if (dead) mm.a.fall?.(1, new THREE.Vector3(1, 0, 0)) // nur der alte Stand; die App legt Tote als Ragdoll (ragdoll.ts, braucht die Map)
         mm.a.root.updateMatrixWorld(true)
         const age = hitAge(d, p, tick) // Schadens-Rot ist in der App an (Höhe hier fest 1 m statt fehlender HP)
         mm.x.update(!!a.xray && !dead, age >= 0 ? mm.a.root.position.y + 1 : -Infinity, damagePulse(age))
@@ -613,7 +613,7 @@ W.step = async (name: string, a: any = {}) => {
         const t = Rd.firstTick + Math.floor(((f + 0.5) / N) * Rd.nFrames * H.frameStep)
         if (!sample(p, t, s0) || !(s0.flags & FLAG.alive)) continue
         poseAt(ag, p, t, true); ag.setWeapon(s0.weapon, await weapon(s0.weapon), null)
-        for (const fallen of [false, true]) {
+        for (const fallen of ag.fall ? [false, true] : [false]) { // Ragdoll: Wurzel folgt dem Becken (Agent.ragdoll), Kugel bleibt um den Körper
           if (fallen) ag.fall(0.45, new THREE.Vector3(1, 0, 0))
           ag.root.updateMatrixWorld(true); THREE.Skeleton.prototype.update.call(hull.skeleton)
           c.copy(CULL.center).applyMatrix4(ag.root.matrixWorld)

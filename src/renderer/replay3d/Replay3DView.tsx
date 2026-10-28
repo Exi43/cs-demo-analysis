@@ -2,7 +2,8 @@
 // der Main-Prozess schon nach dem Import / beim Öffnen des Matches im Hintergrund vor), steckt Engine/Audio zusammen und besitzt die Uhr
 // über das ganze Match (Play/Pause, Tempo, Sprünge; die Runde folgt dem Tick). Low quality lädt nichts neu (Engine schaltet live um).
 // Ladebildschirm: Fortschritt des Asset-Baus (auch "wartet auf eine andere Demo"), Fehler mit Retry, ohne Fortschritt nach STALL_MS ebenfalls Retry.
-// Bildtakt frameloop.ts: in der Pause nur bei Sprung/Option/Resize/engine.dirty(), HUD-State höchstens 15×/s, Statistik 2×/s (hudStats).
+// Bildtakt frameloop.ts: in der Pause nur bei Sprung/Option/Resize/engine.dirty() (sonst schläft er, engine.onDirty weckt ihn),
+// HUD-State höchstens 15×/s, Statistik 2×/s (hudStats).
 // Tasten: hotkeys.ts matchAction auf window keydown (Bubble-Phase, damit der Hotkeys-Dialog sie beim Aufnehmen vorher abfängt).
 // three & Co. kommen nur per dynamischem import() aus engine/audio.
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -22,6 +23,7 @@ import { getOptions, onOptions, setOptions, type OptionsPatch } from './options'
 import { Hud, hudStats } from './Hud'
 import { iconBitmaps, iconKey, useHudScale } from './hud/assets'
 import { SPEEDS } from './hud/DemoBar'
+import { Highlights, useHighlights } from './hud/Highlights'
 import { hudView, timeline } from './hud/state'
 import './hud.css'
 
@@ -89,7 +91,7 @@ export function Replay3DView({ match, map, img, lowerImg, jump, onReimported, on
   const pick = (sid: string) => { setFocus(sid); setMode('ego') }
   const toggleMute = (sid: string) => setMuted(m => { const n = new Set(m); if (!n.delete(sid)) n.add(sid); return n })
 
-  // Sprung aus der Analyse bzw. Selbsttest-Hash #auto/replay3d/<runde>/<sek>[/<ego|free>/<spielerindex>[/<optionen>]]
+  // Sprung aus der Analyse bzw. Selbsttest-Hash #auto/replay3d/<runde>/<sek>[/<ego|free>/<spielerindex>[/<optionen>[/hl[=<n>]]]]
   useEffect(() => {
     if (jump) return seek(Math.max(match.rounds[Math.min(match.rounds.length - 1, jump.round - 1)].startTick, jump.tick))
     const [, , r, sec, cam, pi] = location.hash.startsWith('#auto/replay3d/') ? location.hash.slice(1).split('/') : []
@@ -98,6 +100,7 @@ export function Replay3DView({ match, map, img, lowerImg, jump, onReimported, on
     if (cam === 'ego' || cam === 'free') setMode(cam)
     if (pi && match.players[Number(pi)]) setFocus(match.players[Number(pi)].steamid)
   }, [match.id, jump?.n])
+  const hl = useHighlights(match, tick, focus, { seek, play, pick }) // nach dem Hash-Sprung (Selbsttest 'hl=<n>' springt danach)
 
   // Laden: Assets (Main, meist schon vorbereitet), CS3D + HudTrack und die Engine-/Audio-Module parallel → Engine → Audio.
   // Neuer Canvas je Versuch (WebGL-Kontext nicht wiederverwenden).
@@ -148,7 +151,11 @@ export function Replay3DView({ match, map, img, lowerImg, jump, onReimported, on
       own.a = a
       openMs = ms; done = true
       setRt({ engine: e, audio: a, data, track }); setStatus(null)
-    })().catch(err => { if (!dead) setStatus({ error: err instanceof Error ? err.message : String(err) }) })
+    })().catch(err => {
+      if (dead) return
+      console.error(`3D replay failed: ${err instanceof Error ? err.stack : err}`) // App-Protokoll (z. B. Grafiktreiber ohne BC-Texturen)
+      setStatus({ error: err instanceof Error ? err.message : String(err) })
+    })
     return () => { dead = true; off(); own.a?.dispose(); own.e?.dispose(); hudStats.set(null) }
   }, [match.id, retry])
 
@@ -179,8 +186,9 @@ export function Replay3DView({ match, map, img, lowerImg, jump, onReimported, on
       },
     })
     s.loop = loop
+    engine.onDirty = loop.wake // Pause: der Takt schläft, bis die Engine ein Bild braucht
     loop.setPlaying(s.playing)
-    return () => { loop.stop(); s.loop = undefined }
+    return () => { loop.stop(); engine.onDirty = undefined; s.loop = undefined }
   }, [rt])
 
   useEffect(() => {
@@ -264,7 +272,7 @@ export function Replay3DView({ match, map, img, lowerImg, jump, onReimported, on
       focus: (i: number) => { if (match.players[i]) pick(match.players[i].steamid) }, // Ego auf Spielerindex wie im Hash
       openMs: () => openMs,
     } })
-    return () => removeEventListener('keydown', onKey)
+    return () => { removeEventListener('keydown', onKey); delete (window as { __h3?: unknown }).__h3 } // hielte sonst Engine/Audio nach dem Verlassen fest (~0,7 GB)
   }, [])
 
   // Alter Import ohne 3D-Daten: gespeicherte Demo neu einlesen, sonst Datei wählen lassen
@@ -297,8 +305,10 @@ export function Replay3DView({ match, map, img, lowerImg, jump, onReimported, on
               tick, total, tickrate: rate, rounds, events, playing, speed, settingsOpen: settings,
               onPlay: play, onSpeed: changeSpeed, onSeek: seek, onRound: n => goRound(match.rounds.findIndex(r => r.num === n)),
               onPlayer: pick, onCamera: setMode, onSettings: setSettings, onExit,
+              highlights: hl.open, onHighlights: hl.toggle, reel: hl.reel ? `${hl.reel.i + 1}/${hl.reel.list.length}` : undefined,
             }} />
         )}
+        {rt && view && <Highlights hl={hl} match={match} players={view.players} />}
         {status && (
           <div className="h3-load">
             <div className="h3-load-box">

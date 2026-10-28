@@ -1,6 +1,6 @@
 // Zahnrad-Menü der Demo-Leiste (Entwurf v2 #settings, v2-wasd-menu.png): alle Optionen aus options.ts (useSyncExternalStore, schreibt
-// mit setOptions, gespeichert pro PC), UI-Elemente einzeln + 'Hide all', Bildlimit, Leistungszeile aus Prop stats (~2×/s), Knopf
-// 'Hotkeys…' (öffnet HotkeysDialog), Re-import nur, wenn onReimport übergeben ist (HudTrack fehlt oder CS3D < 5). Offen/zu besitzt der
+// mit setOptions, gespeichert pro PC), UI-Elemente einzeln + 'Hide all', Bildlimit (auch ohne Fokus), Leistungszeile aus Prop stats (~2×/s), Knopf
+// 'Hotkeys…' (öffnet HotkeysDialog), Re-import nur, wenn onReimport übergeben ist (HudTrack fehlt oder CS3D älter als CS3D_VERSION). Offen/zu besitzt der
 // Aufrufer (DemoBar settingsOpen). Kein TrueView (Berat 21.10.). Höhe wie Entwurf (652 px), der Rest scrollt, Fußzeile bleibt stehen.
 import { useState, useSyncExternalStore, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import type { EngineStats } from '../contracts'
@@ -15,6 +15,7 @@ type UiFlag = keyof Replay3DOptions['ui']
 const UI: [UiFlag, string][] = [['scoreboard', 'Scoreboard'], ['teams', 'Team bars'], ['minimap', 'Minimap'], ['killfeed', 'Killfeed'],
   ['panel', 'Player panel'], ['labels', 'Overhead labels'], ['crosshair', 'Crosshair'], ['demobarAutoHide', 'Auto-hide demo bar']]
 const FPS: [FpsCap, string][] = [[30, '30'], [60, '60'], [120, '120'], [0, 'Off']]
+const BG_FPS: FpsCap[] = [15, 30, 60]
 // mousedown ohne Fokus (außer Regler): sonst bleibt der Fokus in der Checkbox und Leertaste schaltet sie statt Play/Pause
 const noFocus = (e: MouseEvent) => { if (!(e.target as HTMLElement).matches('input[type=range]')) e.preventDefault() }
 
@@ -73,12 +74,18 @@ export function SettingsMenu({ stats, onReimport }: {
             {FPS.map(([v, t]) => <button key={v} className={o.fpsCap === v ? 'on' : ''} aria-pressed={o.fpsCap === v} onClick={() => setOptions({ fpsCap: v })}>{t}</button>)}
           </div>
         </div>
+        <div className="hu-row" title="While another window has focus, e.g. a game on the other monitor">
+          <span className="l">In background</span>
+          <div className="hu-seg">
+            {BG_FPS.map(v => <button key={v} className={o.fpsCapBackground === v ? 'on' : ''} aria-pressed={o.fpsCapBackground === v} onClick={() => setOptions({ fpsCapBackground: v })}>{v}</button>)}
+          </div>
+        </div>
         {stats && (
           <div className="hu-stats" data-hud="stats" title={`CPU per frame (setTime): ${stats.cpuMs.toFixed(2)} ms`}>
             {Math.round(stats.fps)} fps · {stats.calls} draw calls · {stats.frameMs.toFixed(1)} ms
           </div>
         )}
-        {onReimport && <div className="hu-note">Imported with an older version: live utility, reserve ammo and buy zone need a re-import.</div>}
+        {onReimport && <div className="hu-note">Imported with an older version: newer details (live utility, reserve ammo, buy zone, stickers) need a re-import.</div>}
         <div className="hu-foot">
           <button className="hu-mbtn" onClick={() => setHotkeys(true)}><HudIcon name="ui/settings" />Hotkeys…</button>
           {onReimport && <button className="hu-mbtn warn" onClick={onReimport}>Re-import demo</button>}

@@ -95,7 +95,8 @@ export async function installMapLight(renderer: THREE.WebGLRenderer, st: MapSett
     tex.flipY = false; tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter; tex.needsUpdate = true
     renderer.initTexture(tex)
   }
-  const uni = tex ? { csdaDls: { value: tex }, csdaSl: { value: s!.lights.flatMap(pack) } } : {}
+  // flach als Float32Array: three lädt Uniform-Arrays bei jedem Materialwechsel neu und wandelte Vector4[] dabei jedes Mal um (~7 % des Renderers)
+  const uni = tex ? { csdaDls: { value: tex }, csdaSl: { value: new Float32Array(s!.lights.flatMap(pack).flatMap(v => v.toArray())) } } : {}
   const CH = THREE.ShaderChunk, libs = [THREE.ShaderLib.standard, THREE.ShaderLib.physical]
   CH.lightmap_pars_fragment = ORIG.lightmap_pars_fragment + (n ? PARS(n) : '') + `\n// csda map light ${++gen}`
   CH.lights_fragment_end = END(n) + ORIG.lights_fragment_end

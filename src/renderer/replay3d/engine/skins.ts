@@ -12,9 +12,12 @@
 // Ein Programm je Feature-Kombination (bleibt im Cache, Uniforms je Skin); Eingabe-Texturen nur für den Pass auf der GPU.
 import * as THREE from 'three'
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js'
-import type { Assets3D, GloveSkin, GloveSkin2, RollVar, WeaponSkin } from '../../../shared/assets3d'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
+import type { Assets3D, EconAssets, GloveSkin, GloveSkin2, RollVar, WeaponSkin } from '../../../shared/assets3d'
 import type { Paint3D, Player3D, Skin3D } from '../../../shared/cs3d'
 import type { Side } from '../../../shared/model'
+import { COPY, MAX_STICKERS, charmPos, charmTemplate, stickerParams, type CharmSet, type StickerSet } from './econ'
 import { GloveCompositor } from './gloves'
 
 const SIZE = 1024, CAP = 24
@@ -457,7 +460,8 @@ void main() {
  */
 export interface SkinFinish { pearl: number; irid: [number, number, number] | null; glitter: [number, number, number, number] | null; ao: THREE.Texture | null }
 /** fertiger Skin; dead = vom LRU freigegeben (Materialien damit verwerfen). legacy = Mesh body_legacy zeigen */
-export interface SkinTex { map: THREE.Texture; orm?: THREE.Texture; normal?: THREE.Texture; finish?: SkinFinish; legacy: boolean; dead: boolean }
+/** map fehlt = Vanilla-Waffe nur mit Aufklebern/Anhänger (engine/econ.ts) */
+export interface SkinTex { map?: THREE.Texture; orm?: THREE.Texture; normal?: THREE.Texture; finish?: SkinFinish; stickers?: StickerSet; charm?: CharmSet; legacy: boolean; dead: boolean }
 interface Owner { tex: SkinTex | null; own: { dispose(): void }[] }
 /** size = gebaute Kantenlänge (0 = noch nicht), auch bei Fehlschlag gesetzt (kein zweiter Versuch in derselben Größe) */
 interface Entry extends Owner { last: number; ego: number; size: number }
@@ -480,6 +484,12 @@ export class SkinCache {
   /** Compositing-Programme je Feature-Kombination (Uniform-Werte je Skin) */
   private readonly progs = new Map<string, THREE.RawShaderMaterial>()
   private readonly shared: { wear?: string; grunge?: string }
+  /** Aufkleber/Anhänger: je Skin, ob es etwas zu zeigen gibt; Masken/Kratzer und Anhänger-Vorlagen leben bis dispose */
+  private readonly econ?: EconAssets
+  private readonly ek: boolean[]
+  private readonly econOwn: Owner = { tex: null, own: [] }
+  private readonly econTex = new Map<string, Promise<THREE.Texture | null>>()
+  private readonly charms = new Map<number, Promise<THREE.Object3D | null>>()
   private busy = false
   private disposed = false
 
@@ -488,6 +498,8 @@ export class SkinCache {
     const all = assets.skins ?? {}
     this.gc = new GloveCompositor(renderer)
     this.wk = skins.map(s => { const x = all[`${s.def}_${s.paint}`]; return x?.kind === 'weapon' ? x : undefined })
+    const E = (this.econ = assets.econ)
+    this.ek = skins.map(s => !!E && ((!!E.weapons[s.def] && !!s.stickers?.some(x => E.stickers[x.id])) || (!!s.charm && !!E.charms[s.charm.id] && !!charmPos(s.charm))))
     // Kits vor Paket S (ohne Standard-Wear/Grunge im JSON): die gemeinsamen paint_wear/gun_grunge aus einem anderen Kit des Matches
     const sh = Object.values(all).find((x): x is WeaponSkin => x.kind === 'weapon' && !!x.paint.textures.wear && !!x.paint.textures.grunge)?.paint.textures
     this.shared = { wear: sh?.wear, grunge: sh?.grunge }
@@ -507,7 +519,7 @@ export class SkinCache {
 
   /** Skin der Waffe in der Hand (Kanal skin, 0 = Vanilla); null = Vanilla oder noch nicht fertig. ego = Ego-Sicht (zuerst bauen) */
   weapon(si: number, def: number, ego = false): SkinTex | null {
-    return si > 0 && this.wk[si - 1] && this.skins[si - 1].def === def ? this.get(si, ego) : null
+    return si > 0 && (this.wk[si - 1] || this.ek[si - 1]) && this.skins[si - 1].def === def ? this.get(si, ego) : null
   }
   /** Handschuh-Skin von Spieler-Index p auf side; null = Standard-Handschuh des Agenten */
   glove(p: number, side: Side, ego = false): SkinTex | null {
@@ -523,7 +535,8 @@ export class SkinCache {
     if (ego) {
       e.ego = e.last
       // shortcut: einmal größer nachgebaut bleibt groß, bis der LRU ihn verdrängt (je Ego-Skin +33 MB VRAM); kleiner bauen erst bei Bedarf
-      if (e.size && e.size < this.egoSize && !this.queue.has(key)) { this.queue.add(key); queueMicrotask(() => void this.pump()) }
+      // nur Aufkleber/Anhänger (kein Kit): Größe egal, kein Nachbau
+      if (e.size && e.size < this.egoSize && (key < 0 || this.wk[key - 1]) && !this.queue.has(key)) { this.queue.add(key); queueMicrotask(() => void this.pump()) }
     }
     return e.tex
   }
@@ -542,7 +555,7 @@ export class SkinCache {
         const e = this.entries.get(key)!, b: Owner = { tex: null, own: [] }
         e.size = e.ego ? this.egoSize : SIZE
         try {
-          const tex = key > 0 ? await this.buildWeapon(this.wk[key - 1]!, this.skins[key - 1], b, e.size) : await this.buildGlove(...this.gl[-key - 1], b, e.size)
+          const tex = key > 0 ? await this.buildItem(key - 1, b, e.size) : await this.buildGlove(...this.gl[-key - 1], b, e.size)
           free(e); e.tex = tex; e.own = b.own // alter (kleinerer) Skin wird erst jetzt ersetzt
         } catch (err) { free(b); console.warn('skin', key, err) } // bisheriger Stand bleibt (Vanilla bzw. kleinerer Skin)
         if (this.disposed) { free(e); return }
@@ -683,6 +696,51 @@ export class SkinCache {
     return { map, orm, normal: normal ?? undefined, finish: fin.pearl || fin.irid || fin.glitter || fin.ao ? fin : undefined, legacy: ws.legacy, dead: false }
   }
 
+  /** Waffe: Lackierung (falls Kit) + Aufkleber/Anhänger (falls vorhanden) */
+  private async buildItem(i: number, e: Owner, size: number): Promise<SkinTex> {
+    const ws = this.wk[i], t: SkinTex = ws ? await this.buildWeapon(ws, this.skins[i], e, size) : { legacy: false, dead: false }
+    if (this.ek[i]) Object.assign(t, await this.buildEcon(this.skins[i], t.legacy, e))
+    return t
+  }
+  /** Maske/Kratzer einmal je URL (bleiben bis dispose) */
+  private econTexture(url: string | undefined, wrap: THREE.Wrapping) {
+    if (!url) return Promise.resolve(null)
+    let p = this.econTex.get(url)
+    if (!p) this.econTex.set(url, (p = this.load(this.econOwn, url, false, wrap).catch(() => null)))
+    return p
+  }
+  /** Aufkleber → Array-Textur (GPU-Kopie, Werte exakt) + Parameter; Anhänger → geteilte Vorlage + Ort */
+  private async buildEcon(s: Skin3D, legacy: boolean, e: Owner): Promise<Pick<SkinTex, 'stickers' | 'charm'>> {
+    const E = this.econ!, out: Pick<SkinTex, 'stickers' | 'charm'> = {}
+    const space = E.weapons[s.def]?.[legacy ? 'legacy' : 'hd'], list = (s.stickers ?? []).filter(x => E.stickers[x.id]).slice(0, MAX_STICKERS)
+    if (space && list.length) {
+      // Legacy-UVs reichen über 0..1 hinaus → Maske wiederholt wie die Waffen-Textur
+      const [texs, mask, scr] = await Promise.all([Promise.all(list.map(x => this.load(e, E.stickers[x.id].tex, false))), this.econTexture(space.mask, THREE.RepeatWrapping), this.econTexture(E.scratches, THREE.ClampToEdgeWrapping)])
+      if (this.disposed) throw new Error('disposed')
+      if (mask && scr && texs.every(t => t)) {
+        const rt = new THREE.WebGLArrayRenderTarget(256, 256, list.length, { depthBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter })
+        rt.texture.anisotropy = 4
+        e.own.push(rt)
+        const prev = this.renderer.getRenderTarget()
+        this.quad.material = COPY
+        texs.forEach((t, k) => { COPY.uniforms.tSrc.value = t; this.renderer.setRenderTarget(rt, k); this.renderer.render(this.scene, this.cam) })
+        this.renderer.setRenderTarget(prev)
+        e.own = e.own.filter(x => !texs.includes(x as THREE.Texture) || (disposeTex(x as THREE.Texture), false))
+        const ps = list.map(x => stickerParams(x, space, E.stickers[x.id].wb, E.stickers[x.id].ws, E.stickers[x.id].paper ?? true))
+        const pad = (k: 0 | 1) => [...ps.map(p => p[k]), ...Array.from({ length: MAX_STICKERS - ps.length }, () => new THREE.Vector4())]
+        out.stickers = { tex: rt.texture, n: list.length, p0: pad(0), p1: pad(1), mask, scr, space }
+      }
+    }
+    const pos = s.charm && E.charms[s.charm.id] && charmPos(s.charm)
+    if (pos) {
+      let p = this.charms.get(s.charm!.id)
+      if (!p) this.charms.set(s.charm!.id, (p = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync(E.charms[s.charm!.id]).then(g => charmTemplate(g.scene), () => null)))
+      const tpl = await p
+      if (tpl) out.charm = { tpl, pos }
+    }
+    return out
+  }
+
   /** Handschuh alt + neu (engine/gloves.ts); Render-Targets gehören dem Eintrag (free) */
   private async buildGlove(g: GloveSkin | GloveSkin2, p: Paint3D, e: Owner, size: number): Promise<SkinTex> {
     const t = await this.gc.build(g, p, size)
@@ -696,6 +754,13 @@ export class SkinCache {
     this.entries.clear(); this.queue.clear()
     for (const m of this.progs.values()) m.dispose()
     this.progs.clear()
+    free(this.econOwn)
+    for (const p of this.charms.values()) void p.then(o => o?.traverse(x => {
+      const m = x as THREE.Mesh
+      if (!m.isMesh) return
+      m.geometry.dispose()
+      for (const mat of [m.material].flat()) { for (const v of Object.values(mat)) if (v instanceof THREE.Texture) v.dispose(); mat.dispose() }
+    }))
     this.gc.dispose()
     this.quad.geometry.dispose(); this.white.dispose(); this.black.dispose(); this.flat.dispose()
   }

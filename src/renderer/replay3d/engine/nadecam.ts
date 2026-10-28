@@ -5,7 +5,7 @@
 // Kamera sieht nur Layer 0 (Schilder auf Layer 1, Viewmodel eigene Szene). Ohne Granate im Flug: null, kein Draw-Call.
 // shortcut: steckt die Hauptkamera im Rauch, färbt das Rauch-Overlay der Effekte (Layer 0) auch dieses Bild grau.
 import * as THREE from 'three'
-import { nadeInFlight } from '../../../shared/cs3d'
+import { nadeInFlight, type CS3D } from '../../../shared/cs3d'
 import { worldToGltf, type Replay3DData } from '../contracts'
 import { getOptions } from '../options'
 
@@ -23,21 +23,33 @@ export interface NadeCam {
   dispose(): void
 }
 
+/** Pfadposition von Granate i bei tick (linear zwischen den 32-Hz-Punkten, an den Enden geklemmt), three-Welt */
+function at(d: CS3D, i: number, tick: number, out: THREE.Vector3) {
+  const N = d.nade, Pt = d.path
+  let lo = N.pathStart[i], hi = N.pathStart[i + 1] - 1
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (Pt.tick[m] <= tick) lo = m; else hi = m }
+  const k = Math.min(1, Math.max(0, (tick - Pt.tick[lo]) / Math.max(1, Pt.tick[hi] - Pt.tick[lo])))
+  return worldToGltf(Pt.x[lo] + (Pt.x[hi] - Pt.x[lo]) * k, Pt.y[lo] + (Pt.y[hi] - Pt.y[lo]) * k, Pt.z[lo] + (Pt.z[hi] - Pt.z[lo]) * k, out)
+}
+const Q = new THREE.Vector3(), R = new THREE.Vector3()
+/**
+ * Granate i bei tick (nach der Detonation stehen geblieben), three-Welt: pos = Projektil, dir = Flugrichtung über ±1 Pfadpunkt
+ * (liegt sie still, bleibt dir). Auch die Kamera der Lineup-Vorschau (Engine.setView { nade }).
+ */
+export function nadePose(d: CS3D, i: number, tick: number, pos: THREE.Vector3, dir: THREE.Vector3) {
+  const t = Math.min(tick, d.nade.detTick[i])
+  at(d, i, t, pos)
+  at(d, i, t + 2, Q).sub(at(d, i, t - 2, R))
+  if (Q.lengthSq() > 1e-8) dir.copy(Q).normalize()
+}
+
 /** enabled = false (Low): render liefert immer null */
 export function createNadeCam(renderer: THREE.WebGLRenderer, scene: THREE.Scene, data: Replay3DData, enabled: boolean): NadeCam {
-  const d = data.d, N = d.nade, Pt = d.path
+  const d = data.d
   const cam = new THREE.PerspectiveCamera(70, 16 / 9, 0.05, FAR_M)
   const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: true, stencilBuffer: true, generateMipmaps: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter })
   const p = new THREE.Vector3(), q = new THREE.Vector3(), dir = new THREE.Vector3(1, 0, 0)
   let lastI = -1, lastT = NaN, skip = false
-
-  /** Pfadposition von Granate i bei tick (linear zwischen den 32-Hz-Punkten, an den Enden geklemmt), three-Welt */
-  function at(i: number, tick: number, out: THREE.Vector3) {
-    let lo = N.pathStart[i], hi = N.pathStart[i + 1] - 1
-    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (Pt.tick[m] <= tick) lo = m; else hi = m }
-    const k = Math.min(1, Math.max(0, (tick - Pt.tick[lo]) / Math.max(1, Pt.tick[hi] - Pt.tick[lo])))
-    return worldToGltf(Pt.x[lo] + (Pt.x[hi] - Pt.x[lo]) * k, Pt.y[lo] + (Pt.y[hi] - Pt.y[lo]) * k, Pt.z[lo] + (Pt.z[hi] - Pt.z[lo]) * k, out)
-  }
 
   return {
     render(tick, w, h, focus = -1) {
@@ -49,10 +61,7 @@ export function createNadeCam(renderer: THREE.WebGLRenderer, scene: THREE.Scene,
       skip = !fresh && !skip
       if (skip) return rt.texture // jedes 2. Bild: das letzte zeigen
       lastI = i; lastT = tick
-      const t = Math.min(tick, N.detTick[i]) // nach der Detonation stehen bleiben
-      at(i, t, p)
-      at(i, t + 2, q).sub(at(i, t - 2, cam.position)) // Flugrichtung über ±1 Pfadpunkt
-      if (q.lengthSq() > 1e-8) dir.copy(q).normalize() // liegt die Granate still: letzte Richtung behalten
+      nadePose(d, i, tick, p, dir)
       cam.position.copy(p).addScaledVector(dir, -BACK_M)
       cam.lookAt(q.copy(p).add(dir))
       cam.aspect = w / h; cam.updateProjectionMatrix(); cam.updateMatrixWorld()

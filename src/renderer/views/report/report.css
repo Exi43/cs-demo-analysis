@@ -1,9 +1,4 @@
 /* Anti-Strat-Ansicht (Pro-Analyse). Wird vor styles.css geladen: eigene rp-Klassen, Overrides mit höherer Spezifität */
-.rp-title { font-size: 22px; margin: 18px 0 0; }
-.rp-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 10px; }
-.rp-legend > span { display: inline-flex; align-items: center; gap: 4px; }
-.rp-jump { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; background: var(--bg); padding: 8px 0; margin-top: 12px; border-bottom: 1px solid var(--line); }
-.rp-jump > button { font-weight: 600; }
 .rp-export { margin-left: auto; display: flex; gap: 4px; align-items: center; }
 .rp-export button { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
 .rp-export button:hover { color: var(--text); }
@@ -15,7 +10,6 @@
 /* Keys */
 .rp-keys { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .rp-key { border-top: 3px solid var(--accent); display: flex; flex-direction: column; gap: 8px; }
-.rp-key-n { color: var(--accent); font-weight: 800; display: flex; align-items: center; gap: 4px; }
 .rp-key-f { margin-top: auto; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 
 /* Zeilen, Tags, Chips */
@@ -76,8 +70,92 @@
 .rp-block-h { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .rp-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 16px; align-items: start; }
 .rp-cols > .rp-card h3 { margin-top: 0; }
-.rp-plan { margin: 0; padding-left: 20px; }
-.rp-limits { margin: 0; padding-left: 18px; }
+
+/* Kopf: wir gegen sie, Ergebnis, Seiten-Bilanz, Rundenleiste (oben = unser Sieg, Symbol = Siegart) */
+.rp-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: center; gap: 24px; background: var(--panel); border-radius: 14px 14px 0 0; padding: 16px 20px 12px; }
+.rp-team { display: flex; flex-direction: column; min-width: 0; }
+.rp-team > span { font-size: 12px; color: var(--muted); }
+.rp-team > b { font-size: 24px; font-weight: 800; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-team.us > b { color: var(--accent); }
+.rp-team.them { align-items: flex-end; text-align: right; }
+.rp-swap { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); margin: 2px 0 0 -6px; }
+.rp-swap:hover { color: var(--text); }
+.rp-score { display: flex; flex-direction: column; align-items: center; font-size: 46px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+.rp-score > div { display: flex; align-items: center; }
+.rp-score i { font-style: normal; color: var(--muted); margin: 0 6px; font-weight: 600; }
+.rp-score span { font-size: 12px; letter-spacing: 0; font-weight: 700; color: var(--muted); margin-top: 6px; text-transform: none; }
+.rp-score.win { color: var(--good); } .rp-score.loss { color: var(--bad); }
+.rp-sides { display: flex; gap: 8px; }
+.rp-side { display: flex; flex-direction: column; align-items: flex-start; background: var(--panel2); border-radius: 10px; padding: 6px 12px; font-size: 12px; color: var(--muted); min-width: 74px; }
+.rp-side b { font-size: 22px; line-height: 1.1; } .rp-side b span { font-size: 13px; color: var(--muted); }
+.rp-side.good b { color: var(--good); } .rp-side.bad b { color: var(--bad); }
+.rp-strip .round-strip { border-radius: 0 0 14px 14px; border: 0; border-top: 1px solid var(--line); padding: 8px 20px 12px; }
+.report .rs.top { background: #1d3a28; }
+.report .rs.bottom { background: var(--panel2); color: var(--muted); }
+.report .rs.bottom .rs-buy { opacity: .6; }
+
+/* Tabs */
+.rp-tabs { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; background: var(--bg); margin: 14px 0 16px; border-bottom: 1px solid var(--line); }
+.rp-tabs > button { display: inline-flex; align-items: center; gap: 7px; background: none; border-radius: 0; padding: 11px 14px 10px; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.rp-tabs > button:hover:not(:disabled) { background: none; color: var(--text); }
+.rp-tabs > button.on { background: none; color: var(--text); border-bottom-color: var(--accent); }
+.rp-tabs > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* At a glance: Karten mit Ampel (--l) */
+.gl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(262px, 1fr)); gap: 12px; }
+.gl-card, .gl-goals li { --l: var(--muted); }
+.report .good { --l: var(--good); } .report .warn { --l: #f0c040; } .report .bad { --l: var(--bad); }
+.gl-card { display: flex; flex-direction: column; gap: 8px; background: var(--panel); border-radius: 12px; padding: 13px 16px 11px; box-shadow: inset 3px 0 var(--l); transition: opacity .15s; }
+.gl-card.dim { opacity: .4; }
+.gl-card header { display: flex; align-items: center; gap: 9px; }
+.report .gl-card h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); text-transform: none; letter-spacing: 0; }
+.gl-ico { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px; background: var(--panel2); color: var(--l); }
+.gl-light { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: var(--l); white-space: nowrap; }
+.gl-light i { width: 8px; height: 8px; border-radius: 50%; background: var(--l); box-shadow: 0 0 0 3px color-mix(in srgb, var(--l) 22%, transparent); }
+.gl-num { display: flex; align-items: baseline; gap: 8px; font-size: 34px; font-weight: 800; line-height: 1; color: var(--l); font-variant-numeric: tabular-nums; }
+.gl-num span { font-size: 12px; font-weight: 600; color: var(--muted); }
+.gl-card.none .gl-num { color: var(--text); }
+.gl-text { margin: 0; font-size: 13px; line-height: 1.4; }
+.gl-facts { display: flex; flex-wrap: wrap; gap: 4px; }
+.gl-facts span { font-size: 11px; color: var(--muted); background: var(--panel2); border-radius: 6px; padding: 2px 7px; }
+.gl-facts span.good { color: var(--good); } .gl-facts span.bad { color: var(--bad); }
+.gl-card footer { margin-top: auto; display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); min-height: 33px; }
+.gl-review { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+.gl-review:hover { color: var(--text); }
+.gl-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 6px 8px 6px 12px; border: 1px solid #5a3a22; background: #24180f; border-radius: 10px; }
+.gl-filter button { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; }
+.gl-goals { margin-top: 16px; background: var(--panel); border-radius: 12px; padding: 14px 18px 16px; border-top: 3px solid var(--accent); }
+.report .gl-goals h2 { margin: 0 0 12px; gap: 8px; }
+.gl-goals ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: goal; }
+.gl-goals li { display: flex; align-items: center; gap: 12px; counter-increment: goal; }
+.gl-goals li::before { content: counter(goal); width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 13px; }
+.gl-goals li > div { display: flex; flex-direction: column; gap: 1px; }
+.gl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.gl-actions button { display: inline-flex; align-items: center; gap: 7px; }
+.gl-toast { position: fixed; right: 24px; bottom: 24px; z-index: 20; background: var(--panel3); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; }
+
+/* Rounds, Players, Economy, Gegner */
+.rp-rounds tr.won td:first-child { box-shadow: inset 3px 0 var(--good); }
+.rp-rounds tr.lost td:first-child { box-shadow: inset 3px 0 var(--bad); }
+.rp-duel { color: var(--text); }
+.rp-win { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.rp-players td { vertical-align: middle; }
+.rp-players tr.on { background: #24180f; }
+.rp-pname { padding: 0; font-weight: 700; color: var(--text); text-align: left; }
+.rp-pname:hover { color: var(--accent); text-decoration: underline; }
+.rp-eco td { vertical-align: middle; width: 40%; } .rp-eco td:first-child { width: 20%; }
+.rp-bar { position: relative; display: block; height: 22px; max-width: 320px; background: var(--panel2); border-radius: 6px; overflow: hidden; }
+.rp-bar i { position: absolute; inset: 0 auto 0 0; background: #2b5a3c; }
+.rp-bar b { position: relative; padding: 0 8px; font-size: 12px; line-height: 22px; font-variant-numeric: tabular-nums; }
+.rp-once { float: right; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.rp-fold { margin-top: 12px; }
+.rp-fold > summary { cursor: pointer; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; padding: 6px 0; }
+.rp-fold > summary:hover { color: var(--text); }
+.rp-fold > summary::-webkit-details-marker { display: none; }
+.rp-fold > summary::before { content: ''; border: 5px solid transparent; border-left: 7px solid currentColor; margin-right: -2px; transition: transform .12s; transform-origin: 3px 5px; }
+.rp-fold[open] > summary::before { transform: rotate(90deg); }
+.rp-limits { margin-top: 28px; padding-top: 10px; border-top: 1px solid var(--line); }
+.rp-limits p { margin: 2px 0; }
 
 /* PDF über window.print(): helles Papier, ohne Navigation */
 @media print {
@@ -89,16 +167,13 @@
   }
   html body, html #root, html .app { display: block; height: auto; background: #fff; }
   html .app main { overflow: visible; }
-  html .sidebar, html .team-pick, html .rp-jump, html .toast, html .report > p.muted { display: none; }
+  html .sidebar, html .rp-tabs, html .rp-strip, html .rp-swap, html .rp-once, html .toast, html .gl-toast { display: none; }
   html .report { max-width: none; margin: 0; padding: 0; font-size: 8pt; line-height: 1.3; }
+  html .rp-head { padding: 4px 8px; border: 1px solid var(--line); }
+  html .rp-score { font-size: 18pt; }
   html .wpn { filter: invert(1); }
   html .report h2 { margin: 8px 0 3px; font-size: 11pt; break-after: avoid; }
   html .report h3 { margin: 6px 0 2px; font-size: 7.5pt; break-after: avoid; }
-  html .rp-title { font-size: 14pt; margin: 0; }
-  html .tiles { margin-top: 4px; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-  html .tile { padding: 3px 8px; border: 1px solid var(--line); }
-  html .tile-num { font-size: 13pt; margin: 0; }
-  html .rp-legend { margin-top: 4px; font-size: 6.5pt; }
   html .rp-card, html .rp-heat, html .rp-table { border: 1px solid var(--line); }
   html .rp-card { padding: 4px 6px; }
   html .rp-key, html .rp-block, html .rp-line, html .rp-table tr, html .rp-heat { break-inside: avoid; }

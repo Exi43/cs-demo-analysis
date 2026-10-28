@@ -8,7 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:
 import { basename, dirname, join } from 'node:path'
 import sharp from 'sharp'
 import type { RollVar, SkinInputs, SkinPaint, SkinRoll } from '../../shared/assets3d.ts'
-import { kv1, kv3, kvList, vrf, writeAtomic, type KV } from './cs2.ts'
+import { kv1, kv3, kvList, MAX_SLOTS, slots, vrf, vrfAsync, writeAtomic, type KV } from './cs2.ts'
 import { gloveJob } from './gloves.ts'
 import type { Ctx } from './map.ts'
 import { rerl, type Kit } from './models.ts'
@@ -227,20 +227,29 @@ interface Job { files: string[]; finish: (out: string) => Promise<void> }
 /**
  * Fehlende Kits (skins/kits/<paint>.json) und composite_inputs (skins/inputs/<name>.json) bauen; Texturen nach skins/tex/<VRF-Pfad>.
  * VRF: 1× alle vcompmat (KV3, < 1 s), dann Paint-/Inputs-vmats samt Texturen in Gruppen zu ≤ 12 Dateien (PNG bis 15 MB je Textur,
- * C: ist knapp), je Gruppe konvertieren und den Export löschen. Handschuhe (alt + neu) baut gloveJob (gloves.ts); Kits ohne vmat → {unsupported}.
+ * C: ist knapp), je Gruppe konvertieren und den Export löschen; bis slots (cs2.ts) Gruppen gleichzeitig, je ~1 Kern und 0,5 GB RAM.
+ * Handschuhe (alt + neu) baut gloveJob (gloves.ts); Kits ohne vmat → {unsupported}.
  */
 export async function buildSkins(c: Ctx, root: string, work: string, kits: KitNeed[], inputs: string[]) {
   const dir = join(root, 'skins')
   for (const d of ['kits', 'inputs']) mkdirSync(join(dir, d), { recursive: true })
   const texDst = (rel: string) => `skins/tex/${rel.endsWith('.exr') ? rel : rel.replace(/\.\w+$/, '.webp')}`
-  const conv = async (out: string, rel: string | undefined, max = 1024, lossy = false) => {
-    if (!rel) return undefined
+  // Stapel laufen parallel: dieselbe Textur (gemeinsame Muster, Standard-Wear) aus zwei Stapeln nur einmal umwandeln
+  const busy = new Map<string, Promise<string | undefined>>()
+  const conv = (out: string, rel: string | undefined, max = 1024, lossy = false) => {
+    if (!rel) return Promise.resolve(undefined)
     const dst = texDst(rel), abs = join(root, dst), src = join(out, rel)
     // shortcut: gleicher Basisname aus verschiedenen Quellordnern landet bei VRF in derselben Datei; selten, dann gewinnt der erste
-    if (existsSync(abs)) return dst
-    if (!existsSync(src)) { console.warn('skin texture missing:', rel); return undefined }
+    if (busy.has(dst)) return busy.get(dst)!
+    if (existsSync(abs)) return Promise.resolve(dst)
+    if (!existsSync(src)) { console.warn('skin texture missing:', rel); return Promise.resolve(undefined) }
+    const p = convert(src, abs, rel, max, lossy).then(() => dst)
+    busy.set(dst, p)
+    return p
+  }
+  const convert = async (src: string, abs: string, rel: string, max: number, lossy: boolean) => {
     mkdirSync(dirname(abs), { recursive: true })
-    if (rel.endsWith('.exr')) { copyFileSync(src, abs); return dst }
+    if (rel.endsWith('.exr')) { copyFileSync(src, abs); return }
     const fit = (s: ReturnType<typeof sharp>) => s.resize(max, max, { fit: 'inside', withoutEnlargement: true })
     const raw = async (s: ReturnType<typeof sharp>) => { const { data, info } = await s.raw().toBuffer({ resolveWithObject: true }); return { data, raw: { width: info.width, height: info.height, channels: info.channels } } }
     // sharp premultipliziert Alpha beim Verkleinern (auch mit removeAlpha): RGB unter A = 0 wären danach schwarz (Legacy-Farbe
@@ -254,9 +263,16 @@ export async function buildSkins(c: Ctx, root: string, work: string, kits: KitNe
     }
     // lossless: Masken/AO/Metall sind Daten je Kanal, verlustbehaftetes WebP (4:2:0) würde sie vermischen; lossy nur für sRGB-Bildinhalt
     writeAtomic(abs, await img.webp({ ...(lossy ? { quality: 90 } : { lossless: true }), exact: true }).toBuffer()) // exact: RGB unter A = 0 sind Daten (AO-Datei: A = NoPaint)
-    return dst
   }
   const jobs: Job[] = []
+  // ein Stapel = ein VRF-Export + finish je Job; Stapel laufen parallel bis zur Grenze slots (Hintergrund 1)
+  let n = 0, stdDone: Promise<void> = Promise.resolve()
+  const run = (batch: Job[]) => slots.run(async () => {
+    const out = join(work, `skin${n++}`); mkdirSync(out, { recursive: true })
+    await vrfAsync(c.exe, ['-i', c.cs2.pak, '-d', '--game', c.cs2.gi, '-f', [...new Set(batch.flatMap(j => j.files))].map(f => f + '_c').join(','), '-o', out], c.log)
+    for (const j of batch) await j.finish(out)
+    rmSync(out, { recursive: true, force: true })
+  })
 
   // ---- Kits: vcompmat in einem Aufruf
   if (kits.length) {
@@ -265,14 +281,14 @@ export async function buildSkins(c: Ctx, root: string, work: string, kits: KitNe
     vrf(c.exe, ['-i', c.cs2.pak, '-d', '-f', files.map(f => f + '_c').join(','), '-o', out], c.log)
     const read = (f: string) => { try { return kv3(readFileSync(join(out, f), 'utf8')) } catch { return null } }
     const sharedDoc = read(SHARED), shared = containers(sharedDoc)
-    // Standard-Wear/-Grunge einmal (Kits ohne eigene Textur zeigen sonst keinen Verschleiß bzw. bleiben Vanilla)
+    // Standard-Wear/-Grunge einmal (Kits ohne eigene Textur zeigen sonst keinen Verschleiß bzw. bleiben Vanilla); Kits warten darauf
     const std = SHARED_WEAR_GRUNGE.filter(v => !existsSync(join(root, texDst(vtexOut(v)))))
-    if (kits.some(k => !k.glove) && std.length) jobs.push({ files: std, finish: async o => { for (const v of std) await conv(o, vtexOut(v), 1024, v.includes('grunge')) } })
+    if (kits.some(k => !k.glove) && std.length) stdDone = run([{ files: std, finish: async o => { for (const v of std) await conv(o, vtexOut(v), 1024, v.includes('grunge')) } }])
     for (const k of kits) {
       const doc = read(kitVcompmat(k.kit, k.glove)), cs: any[] | null = doc ? containers(doc) : null, file = join(dir, 'kits', `${k.paint}.json`)
       // Handschuhe alt + neu (glove_compositor): eigener Export-Schritt (gloves.ts); fehlende vcompmat → Standard
       if (k.glove) {
-        const j = doc && gloveJob(c, doc, work, conv, kit => writeAtomic(file, JSON.stringify(kit)))
+        const j = doc && gloveJob(c, doc, conv, kit => writeAtomic(file, JSON.stringify(kit)))
         if (j) jobs.push(j); else writeAtomic(file, JSON.stringify({ unsupported: true }))
         continue
       }
@@ -288,6 +304,7 @@ export async function buildSkins(c: Ctx, root: string, work: string, kits: KitNe
         const eff = effective(JSON.stringify(doc).includes('_shared_paint_generic') ? [sharedDoc, doc] : [doc], vmat, m)
         // Wear/Grunge wie CS2 (exposed_params bzw. kompilierte Shader-Vorgabe der vmat), sonst Standard: kein Kit ohne Wear-Textur
         p.textures.wear = eff.tex.g_tWear ?? vtexOut(DEFAULT_WEAR); p.textures.grunge = eff.tex.g_tGrunge ?? vtexOut(DEFAULT_GRUNGE)
+        await stdDone
         for (const [key, rel] of Object.entries(p.textures) as [keyof SkinPaint['textures'], string | undefined][]) {
           const art = key === 'pattern' && p.style >= 6 // Custom-Paint-Muster ist sRGB-Bildinhalt (skins.mjs patternSrgb)
           p.textures[key] = await conv(out2, rel, art ? 2048 : 1024, art || key === 'grunge')
@@ -302,7 +319,7 @@ export async function buildSkins(c: Ctx, root: string, work: string, kits: KitNe
         const art = (k: string) => k === 'g_tOverlay' || (k === 'g_tPattern' && p.style >= 6)
         const texAll = async (o: string, keys: string[]) => { for (const k of keys) { const d = await conv(o, eff.tex[k], art(k) ? 2048 : 1024, art(k) || /Grunge$/.test(k)); if (d) eff.tex[k] = d; else delete eff.tex[k] } }
         const write = () => writeAtomic(file, JSON.stringify({ kind: 'weapon', paint: { ...p, vars: eff.vars, tex: eff.tex }, roll, rolls: eff.rolls }))
-        const here = Object.keys(eff.tex).filter(k => existsSync(join(out2, eff.tex[k])) || existsSync(join(root, texDst(eff.tex[k]))))
+        const here = Object.keys(eff.tex).filter(k => existsSync(join(out2, eff.tex[k])) || existsSync(join(root, texDst(eff.tex[k]))) || busy.has(texDst(eff.tex[k])))
         await texAll(out2, here)
         const later = Object.keys(eff.tex).filter(k => !here.includes(k)), vt = eff.vtex.filter(v => later.some(k => eff.tex[k] === vtexOut(v)))
         if (vt.length) jobs.push({ files: vt, finish: async o => { await texAll(o, later); write() } })
@@ -323,14 +340,16 @@ export async function buildSkins(c: Ctx, root: string, work: string, kits: KitNe
     else { r.ao = await conv(out2, ao); write() }
   } })
 
-  // ---- vmats + Texturen in Gruppen
-  for (let i = 0, n = 0; i < jobs.length; n++) {
-    const batch: Job[] = []
-    for (let f = 0; i < jobs.length && (!batch.length || f + jobs[i].files.length <= 12); i++) { batch.push(jobs[i]); f += jobs[i].files.length }
-    c.step(i / jobs.length, 'Exporting skin textures')
-    const out = join(work, `skin${n}`); mkdirSync(out, { recursive: true })
-    vrf(c.exe, ['-i', c.cs2.pak, '-d', '--game', c.cs2.gi, '-f', [...new Set(batch.flatMap(j => j.files))].map(f => f + '_c').join(','), '-o', out], c.log)
-    for (const j of batch) await j.finish(out)
-    rmSync(out, { recursive: true, force: true })
+  // ---- vmats + Texturen in Gruppen; mehrere Gruppen zugleich (slots), Folge-Jobs aus finish nimmt die nächste freie Schleife
+  let i = 0, stop = false
+  const pull = async () => {
+    while (!stop && i < jobs.length) {
+      const batch: Job[] = []
+      for (let f = 0; i < jobs.length && (!batch.length || f + jobs[i].files.length <= 12); i++) { batch.push(jobs[i]); f += jobs[i].files.length }
+      c.step(i / jobs.length, 'Exporting skin textures')
+      await run(batch).catch(e => { stop = true; throw e })
+    }
   }
+  const all = await Promise.allSettled([stdDone, ...Array.from({ length: MAX_SLOTS }, pull)])
+  for (const r of all) if (r.status === 'rejected') throw r.reason
 }

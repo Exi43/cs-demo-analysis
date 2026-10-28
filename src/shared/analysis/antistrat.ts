@@ -23,15 +23,19 @@ export const keyScore = (l: Line, overall: number) =>
 /** gleiche Beleg-Runden = gleicher Befund; ohne Beleg zaehlt der Text */
 const sigOf = (l: Line) => (l.refs.length ? l.refs.map(r => `${r.matchId}:${r.round}`).sort().join() : l.text)
 
-/** Top k nach keyScore, zuerst Zeilen mit Konter (ohne nur zum Auffuellen); gleiche Beleg-Runden = gleicher Befund (der mit Konter bleibt) */
+/** Befund-Art: Text ohne Zahlen (T- und CT-Zeile "Opening duel won 9/15 …" sind derselbe Befund) */
+const famOf = (l: Line) => (/[a-z]{3}/i.test(l.text) ? `t:${l.text.replace(/\d+/g, '#')}` : undefined)
+
+/** Top k nach keyScore, zuerst Zeilen mit Konter (ohne nur zum Auffuellen). Duplikat = gleiche Beleg-Runden, gleiche Befund-Art
+ *  oder gleicher Konter; es bleibt die ranghoechste Zeile */
 export function rankKeys(lines: Line[], overall: number, k = 3): Line[] {
   const seen = new Set<string>(), out: Line[] = []
   const scored = lines.filter(l => keyScore(l, overall) > 0).sort((a, b) => keyScore(b, overall) - keyScore(a, overall))
   const ranked = [...scored.filter(l => l.counter), ...scored.filter(l => !l.counter)]
   for (const l of ranked) {
-    const sig = sigOf(l)
-    if (seen.has(sig)) continue
-    seen.add(sig); out.push(l)
+    const sigs = [sigOf(l), famOf(l), l.counter && `c:${l.counter}`].filter((s): s is string => !!s)
+    if (sigs.some(s => seen.has(s))) continue
+    sigs.forEach(s => seen.add(s)); out.push(l)
     if (out.length === k) break
   }
   return out

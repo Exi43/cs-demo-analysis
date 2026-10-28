@@ -48,13 +48,14 @@ void main() {
 
 /**
  * Auto-Belichtung wie CS2 (histogram_cs: Mittel von log2(max(Rec.-709-Luma, 0,005)) → geometrisches Mittel Y, licht-shader Befund 10):
- * Messbild AE_W × AE_H (je Texel 4 × 4 Abtastungen des HDR-Ziels), asynchron zurückgelesen (PBO, kein GPU-Stau), nächste Messung sobald zurück.
+ * Messbild AE_W × AE_H (je Texel 4 × 4 Abtastungen des HDR-Ziels), asynchron zurückgelesen (PBO, kein GPU-Stau), nächste Messung sobald zurück,
+ * höchstens alle AE_MS (jede Rücklese kostet einen synchronen Umlauf zum GPU-Prozess; die Belichtung gleitet ohnehin je Bild).
  * Belichtung k = clamp(AE_KEY / Y, min(k₀, AE_PPV[0] · min), AE_PPV[1] · max), k₀ = toneMapping.exposure, min/max = min/maxexposure der
  * post_processing_volume (settings.exposureRange, × Belichtungs-Bias der .vpost); ältere map.json: k₀ · AE_RANGE als Grenzen. Gleitet mit
  * AE_RATE in log2. Gefittet an den 30 CS2-Ladebild-Posen (LUT an, Fehler je Pose in Blenden, rms): feste Belichtung 0,42, k₀-Grenzen 0,23,
  * diese Formel 0,18 (Anubis mit kleinem minexposure dunkler wie CS2). shortcut: CPU-Formel von CS2 unbekannt – bei neuen Ladebild-Messungen nachfitten.
  */
-const AE_W = 64, AE_H = 36, AE_KEY = 0.306, AE_PPV = [1.76, 1.9] as const, AE_RANGE = [1, 1.7] as const, AE_RATE = 2.5
+const AE_W = 64, AE_H = 36, AE_KEY = 0.306, AE_PPV = [1.76, 1.9] as const, AE_RANGE = [1, 1.7] as const, AE_RATE = 2.5, AE_MS = 100
 const LOGLUM = /* glsl */ `uniform sampler2D tSrc; varying vec2 vUv;
 void main() {
 	float s = 0.0;
@@ -182,8 +183,9 @@ export function createPost(renderer: THREE.WebGLRenderer, st: MapSettings, lut: 
   const logLum = pass(LOGLUM, { tSrc: { value: target.texture as THREE.Texture } }), aeBuf = new Float32Array(AE_W * AE_H * 4)
   const k0 = tm.exposure, er = st.exposureRange, bias = er ? k0 / (1.26 * (er[0] + er[1]) / 2) : 1 // map.ts mapSettings: k₀ = 1,26 · Mittel · Bias
   const lo = er ? Math.min(k0, AE_PPV[0] * er[0] * bias) : k0 * AE_RANGE[0], hi = er ? AE_PPV[1] * er[1] * bias : k0 * AE_RANGE[1]
-  let k = k0, want = 0, last = 0, reading = false, aeOff = false, disposed = false
+  let k = k0, want = 0, last = 0, reading = false, aeOff = false, disposed = false, measuredAt = -Infinity
   const measure = () => {
+    measuredAt = performance.now()
     logLum.uniforms.tSrc.value = target.texture
     run(logLum, aeRT)
     reading = true
@@ -214,7 +216,7 @@ export function createPost(renderer: THREE.WebGLRenderer, st: MapSettings, lut: 
     finish(dt) {
       const ac = renderer.autoClear
       renderer.autoClear = false // jeder Pass deckt sein Ziel ganz ab; Hochrechnen mischt ins Ziel
-      if (!aeOff && !reading) measure()
+      if (!aeOff && !reading && performance.now() - measuredAt >= AE_MS) measure()
       if (want) k *= (want / k) ** (1 - Math.exp(-AE_RATE * dt)) // in log2 gleiten
       fu.uExposure.value = k
       if (bloomOn) {

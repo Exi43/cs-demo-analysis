@@ -133,8 +133,12 @@ export interface MapAssetManifest {
    * (Byte ((b·32 + g)·32 + r)·3). Ein- und Ausgang sRGB, nach dem Tonemapping abtasten bei c·31/32 + 1/64 (Data3DTexture, linear). Fehlt → keine LUT.
    */
   lut?: string
-  /** 3D-Skybox (Modell ohne Lightmap): Map-Position = (Skybox-Position − origin) · scale, origin = sky_camera in Source-u; fehlt → nur Himmel */
-  skybox?: { glb: string; scale: number; origin: [number, number, number] }
+  /**
+   * 3D-Skybox: Map-Position = (Skybox-Position − origin) · scale, origin = sky_camera in Source-u; fehlt → nur Himmel. lightmap = ihre gebackene
+   * Lightmap (Format wie lightmap, Sonden als _PROBE in der .gltf); fehlt (Cache vor MAP_VERSION 7) → Himmelslicht. ownFog = die Skybox-Welt hat
+   * eigene Nebel-Entities: Nebel in Skybox-Abständen (÷ scale), sonst der Map-Nebel in echten Abständen (engine/map.ts patchMaterial)
+   */
+  skybox?: { glb: string; scale: number; origin: [number, number, number]; lightmap?: string; ownFog?: boolean }
   /** FloorGrid-Datei (Untergrund für Schritte, Lagen für Sonden) */
   floor: string
   /** Agenten-Licht (Critic P0-2), Format bei parseFloorGrid */
@@ -187,6 +191,24 @@ export interface CSDABlend {
   adj?: (number[] | null)[]
   /** height: Tint-Maske je Layer (Kontrast, Helligkeit) × 3; Modell-Tönung (Colorize mit der Material-/Vertex-Farbe) je Layer 0|1 und Stärke */
   tm?: [number, number, number, number, number, number]; mt?: [number, number, number]; mta?: number
+}
+
+/**
+ * Himmels-Effekte der 3D-Skybox (ext.fx, Vertrag csda-ext.ts → engine/map.ts; Formeln aus csgo_effects_ps/csgo_unlitgeneric_ps, VRF-SPIR-V):
+ * uv = uv0 · uv[0..1] + uv[2..3] · t; Farbe = Basis(uv) [· color2(uv0 · uv2)] · boost; Alpha = Basis.a · opacity · Maske1..3(uv · Skala + Schwenk · t).r
+ * [· Fresnel · Abstand]. Ohne Maske (Standardmaske) = 1. Wolken-Kuppeln (Dust2), Wolken-/Dunst-Karten, Sonnenscheiben.
+ */
+export interface CSDAFx {
+  uv: [number, number, number, number]
+  uv2?: [number, number]
+  boost: number
+  opacity: number
+  /** je Maske 1..3: Skala u, v, Schwenk u, v (UV/s) */
+  masks?: [number, number, number, number][]
+  /** g_flFresnelExponent, Falloff, Min, Max: Alpha · mix(Min, Max, saturate(pow(N·V, Exponent) · Falloff)) */
+  fresnel?: [number, number, number, number]
+  /** g_flFadeDistance (m), Falloff, Min, Max: Alpha · pow(mix(Min, Max, saturate(d / Distanz)), Falloff) */
+  fade?: [number, number, number, number]
 }
 
 export interface AgentAssets {
@@ -348,15 +370,38 @@ export interface GloveSkin2 { kind: 'glove2'; vars: Record<string, number[]>; te
 /** Schlüssel `${def}_${paint}` (header.skins bzw. Player3D.glove); Seed und Wear kommen pro Instanz aus der Demo */
 export type SkinAssets = Record<string, WeaponSkin | GloveSkin | GloveSkin2>
 
-/** gloves: Handschuh-def (5027–5035) → GLB; skins fehlt/leer → Vanilla (alter Bau, Fehler beim Skin-Export) */
-export interface Assets3D { map: MapAssetManifest; agents: AgentAssets; weapons: WeaponAssets; sounds: SoundAssets; gloves?: Record<number, string>; skins?: SkinAssets }
+/**
+ * Sticker-Raum einer Mesh-Variante (main/assets3d/econ.ts): uv2 = (u·p, v·p) mit p = (x, y, z, 1) im glTF-Wurzelraum des Waffen-GLB,
+ * gültig nur auf der Seite s (dot(Normale, s) > 0) und wo mask.r > 0 (mask: R erlaubt, G Kavität, UV0). slots = StickerMarkup (Versatz im
+ * uv2 um 0.5, Skala, Drehung) je Platz
+ */
+export interface StickerSpace { u: number[]; v: number[]; s: number[]; mask: string; slots: { x: number; y: number; scale: number; rot: number }[] }
+/**
+ * Aufkleber/Anhänger des Matches: stickers sticker_kits-ID → Textur (256², sRGB + Alpha) + Wear-Parameter des Aufkleber-Materials
+ * (g_vWearBiasSticker0, g_fWearScratchesSticker0, paper = g_bPaperBackingSticker0, fehlt = ja); charms keychain_definitions-ID → GLB (Ursprung = Öse, hängt nach −y);
+ * weapons Waffen-def → Sticker-Raum je Mesh (hd/legacy); scratches = Kratzer-Textur für Wear
+ */
+export interface EconAssets {
+  stickers: Record<number, { tex: string; wb: [number, number]; ws: number; paper?: boolean }>
+  charms: Record<number, string>
+  weapons: Record<number, { hd?: StickerSpace; legacy?: StickerSpace }>
+  scratches?: string
+}
 
-/** Was prepare3d aus dem CS3D-Header braucht: Agenten, Waffen (+ Messer pro Seite), Lackierungen von Waffen und Handschuhen */
+/** gloves: Handschuh-def (5027–5035) → GLB; skins fehlt/leer → Vanilla (alter Bau, Fehler beim Skin-Export); econ fehlt → ohne Aufkleber/Anhänger */
+export interface Assets3D { map: MapAssetManifest; agents: AgentAssets; weapons: WeaponAssets; sounds: SoundAssets; gloves?: Record<number, string>; skins?: SkinAssets; econ?: EconAssets }
+
+/** Was prepare3d aus dem CS3D-Header braucht: Agenten, Waffen (+ Messer pro Seite), Lackierungen von Waffen und Handschuhen, Aufkleber/Anhänger */
 export function prepareInput(h: CS3DHeader) {
   return {
     map: h.map, agents: h.players.flatMap(p => [p.agent.T, p.agent.CT]),
     weapons: [...h.weapons, ...h.players.flatMap(p => Object.values(p.knife ?? {}))],
     skins: [...h.skins, ...h.players.flatMap(p => Object.values(p.glove ?? {}))].map(({ def, paint }) => ({ def, paint })),
+    econ: {
+      stickers: [...new Set(h.skins.flatMap(s => s.stickers?.map(x => x.id) ?? []))],
+      charms: [...new Set(h.skins.flatMap(s => (s.charm ? [s.charm.id] : [])))],
+      defs: [...new Set(h.skins.filter(s => s.stickers?.length).map(s => s.def))],
+    },
   }
 }
 

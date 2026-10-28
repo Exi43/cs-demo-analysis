@@ -19,7 +19,7 @@ afterEach(() => vi.unstubAllGlobals())
 describe('options', () => {
   it('defaults: keys, impacts, x-ray, grenade cam off; trails on; 60 fps; all UI shown', async () => {
     const o = await fresh(mem())
-    expect(o.getOptions()).toMatchObject({ showKeys: false, impacts: false, xray: false, nadeTrails: true, nadeCam: false, fpsCap: 60, fpsCapUnfocused: 30, hideAll: false })
+    expect(o.getOptions()).toMatchObject({ showKeys: false, impacts: false, xray: false, nadeTrails: true, nadeCam: false, fpsCap: 60, fpsCapBackground: 15, hideAll: false })
     expect(o.getOptions().ui.demobarAutoHide).toBe(false)
     for (const el of UI) expect(o.shown(el)).toBe(true)
   })

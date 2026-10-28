@@ -11,13 +11,13 @@ import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer'
 import sharp from 'sharp'
 import type { VmRole, WeaponAnim, WeaponAsset, WorldRole } from '../../shared/assets3d.ts'
 import { clipEvents, type ClipEvents } from './clipevents.ts'
-import { kv1, kv3, kvGet, kvList, vrf, writeAtomic, type KV } from './cs2.ts'
-import type { Ctx } from './map.ts'
+import { isFast, kv1, kv3, kvGet, kvList, vrf, vrfAsync, writeAtomic, type KV } from './cs2.ts'
+import { sharpLimited, type Ctx } from './map.ts'
 import { readVtex, type Vtex } from './vtex.ts'
 
 const S = 0.0254
 let ioP: Promise<NodeIO> | null = null
-const getIO = () => ioP ??= Promise.all([MeshoptEncoder.ready, MeshoptDecoder.ready]).then(() =>
+export const getIO = () => ioP ??= Promise.all([MeshoptEncoder.ready, MeshoptDecoder.ready]).then(() =>
   new NodeIO().setLogger(new Logger(Logger.Verbosity.WARN)).registerExtensions(ALL_EXTENSIONS).registerDependencies({ 'meshopt.encoder': MeshoptEncoder, 'meshopt.decoder': MeshoptDecoder }))
 
 // ---------------------------------------------------------------- items_game.txt
@@ -111,9 +111,9 @@ export const CLIP_LIST2 = [
 ].map(n => 'animation/anims/world/' + n)
 
 /** Donor-Export (ctm_sas) der Welt-Clips list → Pfad der roh exportierten GLB */
-function exportDonor(c: Ctx, out: string, list: string[]) {
+async function exportDonor(c: Ctx, out: string, list: string[]) {
   mkdirSync(out, { recursive: true })
-  vrf(c.exe, ['-i', c.cs2.pak, '-f', 'agents/models/ctm_sas/ctm_sas.vmdl_c', '-o', out, '-d', '--game', c.cs2.gi, '--gltf_export_format', 'glb',
+  await vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', 'agents/models/ctm_sas/ctm_sas.vmdl_c', '-o', out, '-d', '--game', c.cs2.gi, '--gltf_export_format', 'glb',
     '--gltf_export_animations', '--gltf_compose_additive', '--gltf_animation_list', list.join(','), '--gltf_mesh_list', 'thirdperson_body'], c.log)
   const donor = join(out, 'agents', 'models', 'ctm_sas', 'ctm_sas.glb')
   if (!existsSync(donor)) throw new Error(`Agent animation export failed. Log: ${c.log}`)
@@ -125,7 +125,7 @@ export async function buildClips(c: Ctx, dir: string, work: string) {
   mkdirSync(dir, { recursive: true })
   const list = [...CLIP_LIST, ...CLIP_LIST2]
   const io = await getIO()
-  const doc = await io.read(exportDonor(c, join(work, 'donor'), list))
+  const doc = await io.read(await exportDonor(c, join(work, 'donor'), list))
   const meta = bakeClips(doc, new Set(list))
   await finishClips(doc)
   if (Object.keys(meta).length < list.length * 0.9) throw new Error(`Only ${Object.keys(meta).length} of ${list.length} agent animations found (CS2 update?).`)
@@ -241,7 +241,7 @@ export async function buildAgents(c: Ctx, dir: string, work: string, models: str
   if (!models.length) return
   const out = join(work, 'agents'); mkdirSync(out, { recursive: true })
   // Ohne --gltf_export_animations schreibt VRF kein Skelett; ein Clip genügt
-  vrf(c.exe, ['-i', c.cs2.pak, '-f', models.map(m => `agents/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
+  await vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', models.map(m => `agents/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
     '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt', '--gltf_export_animations',
     '--gltf_animation_list', 'animation/anims/world/rifle/_default_rifle/idle_rifle', '--gltf_mesh_list', 'thirdperson_body,thirdperson_default_gloves'], c.log)
   const gloss = anisoGloss(c, models, work), done = new Map<string, Uint8Array>() // Varianten teilen Texturen
@@ -359,8 +359,8 @@ async function opaqueNormals(doc: Document) {
 async function writeSkinned(io: NodeIO, doc: Document, file: string) {
   await opaqueNormals(doc)
   await doc.transform(dedup(), weld(), prune({ keepLeaves: true }),
-    textureCompress({ encoder: sharp, targetFormat: 'webp', slots: /baseColor|emissive/, resize: [1024, 1024], quality: 82 }),
-    textureCompress({ encoder: sharp, targetFormat: 'webp', slots: /normal|occlusion|metallicRoughness/, resize: [DETAIL_PX, DETAIL_PX], quality: 80 }),
+    textureCompress({ encoder: sharpLimited, targetFormat: 'webp', slots: /baseColor|emissive/, resize: [1024, 1024], quality: 82 }),
+    textureCompress({ encoder: sharpLimited, targetFormat: 'webp', slots: /normal|occlusion|metallicRoughness/, resize: [DETAIL_PX, DETAIL_PX], quality: 80 }),
     meshopt({ encoder: MeshoptEncoder, level: 'medium' }), prune({ keepLeaves: true }))
   mkdirSync(dirname(file), { recursive: true })
   writeAtomic(file, await io.writeBinary(doc))
@@ -450,10 +450,15 @@ const missingVariants = (dir: string, m: string, legacy: Set<string>) => [false,
 export async function buildWeapons(c: Ctx, dir: string, work: string, models: string[], legacy = new Set<string>()) {
   models = models.filter(m => missingVariants(dir, m, legacy).length)
   const io = await getIO()
+  // Vordergrund: der nächste Stapel exportiert schon, während dieser optimiert wird (VRF-Prozess und Worker gleichzeitig)
+  const exp = (b: number) => { const out = join(work, `weapons${b}`); mkdirSync(out, { recursive: true }); return vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', models.slice(b, b + 8).map(m => `weapons/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
+    '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt'], c.log) }
+  let next: Promise<void> | undefined
   for (let b = 0; b < models.length; b += 8) {
-    const batch = models.slice(b, b + 8), out = join(work, `weapons${b}`); mkdirSync(out, { recursive: true })
-    vrf(c.exe, ['-i', c.cs2.pak, '-f', batch.map(m => `weapons/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
-      '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt'], c.log)
+    const batch = models.slice(b, b + 8), out = join(work, `weapons${b}`)
+    await (next ?? exp(b))
+    next = isFast() && b + 8 < models.length ? exp(b + 8) : undefined
+    next?.catch(() => {}) // Fehler beim await oben; läuft er nach einem Fehler weiter, wartet prepare3d (vrfIdle)
     for (const [k, m] of batch.entries()) {
       c.step((b + k) / models.length, `Optimizing ${m.split('/').pop()}`)
       const raw = join(out, 'weapons', 'models', `${m}.glb`)
@@ -472,7 +477,7 @@ export async function buildWeapons(c: Ctx, dir: string, work: string, models: st
         for (const s of root.listSkins()) s.dispose()
         if (/elite/.test(m)) splitDual(doc)
         await opaqueNormals(doc)
-        await doc.transform(dedup(), weld(), prune(), textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [512, 512], quality: 82 }),
+        await doc.transform(dedup(), weld(), prune(), textureCompress({ encoder: sharpLimited, targetFormat: 'webp', resize: [512, 512], quality: 82 }),
           meshopt({ encoder: MeshoptEncoder, level: 'medium' }), prune())
         writeAtomic(join(dir, weaponFile(m, lg)), await io.writeBinary(doc))
       }
@@ -687,7 +692,7 @@ export async function buildWorldClips(c: Ctx, dir: string, work: string, items: 
   const bs = batches(items)
   for (const [run, b] of bs.entries()) {
     c.step(run / bs.length, 'Exporting player weapon animations')
-    const raw = await io.read(exportDonor(c, join(work, `world${run}`), [...b.paths]))
+    const raw = await io.read(await exportDonor(c, join(work, `world${run}`), [...b.paths]))
     const meta = bakeClips(raw, b.paths, upperBody)
     dropSamplers(raw)
     await raw.transform(prune({ keepLeaves: true }))
@@ -718,7 +723,7 @@ export async function buildVmClips(c: Ctx, dir: string, work: string, vars: [str
   for (const [run, b] of bs.entries()) {
     c.step(run / bs.length, 'Exporting first-person animations')
     const out = join(work, `clips${run}`); mkdirSync(out, { recursive: true })
-    vrf(c.exe, ['-i', c.cs2.pak, '-f', 'agents/models/ctm_sas/ctm_sas.vmdl_c', '-o', out, '-d', '--game', c.cs2.gi, '--gltf_export_format', 'glb',
+    await vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', 'agents/models/ctm_sas/ctm_sas.vmdl_c', '-o', out, '-d', '--game', c.cs2.gi, '--gltf_export_format', 'glb',
       '--gltf_export_animations', '--gltf_animation_list', [...b.paths].join(','), '--gltf_mesh_list', 'firstperson_default_gloves_arms,firstperson_sleeves'], c.log)
     const raw = join(out, 'agents', 'models', 'ctm_sas', 'ctm_sas.glb')
     if (!existsSync(raw)) throw new Error(`First-person animation export failed. Log: ${c.log}`)
@@ -814,7 +819,7 @@ export async function buildArms(c: Ctx, dir: string, work: string, models: strin
     c.step(i / models.length, 'Exporting first-person arms')
     const batch = models.slice(i, i + 2), out = join(work, `arms${i}`); mkdirSync(out, { recursive: true })
     // Ohne --gltf_export_animations kein Skelett; ein Viewmodel-Clip genügt
-    vrf(c.exe, ['-i', c.cs2.pak, '-f', batch.map(m => `agents/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
+    await vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', batch.map(m => `agents/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
       '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt', '--gltf_export_animations',
       '--gltf_animation_list', idleClip, '--gltf_mesh_list', 'firstperson_default_gloves_arms,firstperson_sleeves'], c.log)
     for (const m of batch) {
@@ -864,11 +869,16 @@ function reweightArms(doc: Document) {
 export async function buildVmWeapons(c: Ctx, dir: string, work: string, models: string[], legacy = new Set<string>()) {
   models = models.filter(m => missingVariants(dir, m, legacy).length)
   const io = await getIO()
+  // wie buildWeapons: im Vordergrund exportiert der nächste Stapel, während dieser verarbeitet wird
+  const exp = (i: number) => { const out = join(work, `w${i}`); mkdirSync(out, { recursive: true }); return vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', models.slice(i, i + 5).map(m => `weapons/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
+    '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt', '--gltf_export_animations', '--gltf_animation_list', 'none'], c.log) }
+  let next: Promise<void> | undefined
   for (let i = 0; i < models.length; i += 5) { // ≤ 5 je VRF-Lauf: Peak 2.2 GB (vm-Spike)
     c.step(i / models.length, 'Exporting first-person weapons')
-    const batch = models.slice(i, i + 5), out = join(work, `w${i}`); mkdirSync(out, { recursive: true })
-    vrf(c.exe, ['-i', c.cs2.pak, '-f', batch.map(m => `weapons/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
-      '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt', '--gltf_export_animations', '--gltf_animation_list', 'none'], c.log)
+    const batch = models.slice(i, i + 5), out = join(work, `w${i}`)
+    await (next ?? exp(i))
+    next = isFast() && i + 5 < models.length ? exp(i + 5) : undefined
+    next?.catch(() => {})
     for (const m of batch) {
       const raw = join(out, 'weapons', 'models', `${m}.glb`)
       if (!existsSync(raw)) continue
@@ -889,7 +899,7 @@ export async function buildGloves(c: Ctx, dir: string, work: string, models: str
     c.step(i / models.length, 'Exporting gloves')
     const batch = models.slice(i, i + 4), out = join(work, `g${i}`); mkdirSync(out, { recursive: true })
     // Ohne --gltf_export_animations kein Skelett; 'none' = Skelett ohne Clip
-    vrf(c.exe, ['-i', c.cs2.pak, '-f', batch.map(m => `agents/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
+    await vrfAsync(c.exe, ['-i', c.cs2.pak, '-f', batch.map(m => `agents/models/${m}.vmdl_c`).join(','), '-o', out, '-d', '--game', c.cs2.gi,
       '--gltf_export_format', 'glb', '--gltf_export_materials', '--gltf_textures_adapt', '--gltf_export_animations', '--gltf_animation_list', 'none'], c.log)
     for (const m of batch) {
       const raw = join(out, 'agents', 'models', `${m}.glb`)

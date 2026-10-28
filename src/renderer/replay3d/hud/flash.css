@@ -1,0 +1,18 @@
+/* Blend-Anzeige der Ego-Sicht (FlashIndicator.tsx): kompakt direkt über dem Spieler-Panel unten Mitte (Berat 28.10.: in der Bildmitte
+   verdeckte sie zu viel), Name/HP und Waffe/Munition bleiben frei. Dunkle Leiste, damit sie auch über dem Weiß lesbar bleibt;
+   "FULL FLASH" steht links daneben, die Leiste bleibt dabei stehen. Maße in 1080p-px (.hud zoom); Panel-Oberkante = 172 px (bottom.css). */
+.hf-flash {
+  position: absolute; left: 50%; bottom: 180px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px 0 8px; border-radius: 3px;
+  background: rgba(0, 0, 0, .62); box-shadow: 0 2px 8px rgba(0, 0, 0, .35); white-space: nowrap;
+}
+.hf-flash > .hud-ico { width: 18px; height: 18px; }
+.hf-s { min-width: 46px; text-align: right; font: 700 19px/1 var(--fm); }
+.hf-s small { margin-left: 2px; font: 700 12px var(--f); color: #c8c8c8; }
+.hf-bar { width: 90px; height: 5px; border-radius: 3px; overflow: hidden; background: rgba(255, 255, 255, .22); }
+.hf-bar i { display: block; height: 100%; background: #fff; }
+.hf-p { min-width: 36px; font: 700 13px var(--fm); color: #dcdcdc; }
+.hf-tag {
+  position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); padding: 3px 8px 2px; border-radius: 2px;
+  background: #fff; color: #101216; font: 900 14px var(--f); letter-spacing: 1.5px; box-shadow: 0 0 10px rgba(255, 255, 255, .5);
+}

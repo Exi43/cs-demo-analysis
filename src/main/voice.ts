@@ -4,9 +4,10 @@
 /** seq = CMsgVoiceAudio.section_number (+1 pro Paket, Lücke = verlorenes Paket) */
 export interface VoicePacket { tick: number; steamid: string; opus: Uint8Array; seq?: number }
 
-function varint(b: Uint8Array, p: { i: number }) { let r = 0, s = 0, x; do { x = b[p.i++]; r |= (x & 0x7f) << s; s += 7 } while (x & 0x80); return r >>> 0 }
+/** untere 32 bit (negative int32 = 10 Byte → wie u32) */
+function varint(b: Uint8Array, p: { i: number }) { let r = 0, s = 0, x; do { x = b[p.i++]; if (s < 32) r |= (x & 0x7f) << s; s += 7 } while (x & 0x80); return r >>> 0 }
 
-function unsnappy(src: Uint8Array) {
+export function unsnappy(src: Uint8Array) {
   const p = { i: 0 }; const out = new Uint8Array(varint(src, p)); let o = 0
   while (p.i < src.length) {
     const tag = src[p.i++], t = tag & 3

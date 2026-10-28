@@ -217,11 +217,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, match: MatchData, view:
         if ((L.side && tr.side !== L.side) || (L.players && !L.players.has(tr.steamid))) continue
         ctx.strokeStyle = (L.color ?? COLORS[tr.side]) + (L.highlight && L.highlight !== tr.steamid ? '33' : 'cc')
         ctx.lineWidth = (L.highlight === tr.steamid ? 2.5 : 1.5) * s; ctx.beginPath()
-        let pen = false
-        for (let i = Math.floor(fBack); i <= Math.floor(f); i++) {
+        // Punkte unter 1 px Abstand weglassen (Stehen, kleine Zeichenfläche): Multi-Runden zeichnet je Bild Zehntausende Segmente
+        let pen = false, lx = 0, ly = 0
+        for (let i = Math.floor(fBack), last = Math.floor(f); i <= last; i++) {
           if (tr.hp[i] <= 0) break
           const [x, y] = P(tr.x[i], tr.y[i])
-          pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y); pen = true
+          if (pen && i < last && (x - lx) ** 2 + (y - ly) ** 2 < 1) continue
+          pen ? ctx.lineTo(x, y) : ctx.moveTo(x, y); pen = true; lx = x; ly = y
         }
         ctx.stroke()
       }

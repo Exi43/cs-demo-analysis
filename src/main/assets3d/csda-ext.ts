@@ -5,12 +5,13 @@
 //   layer3Texture (sRGB), height1..3Texture (linear, R Höhe, G Tint-Maske), blend = CSDABlend (shared/assets3d.ts): Mehr-Layer-Blend
 //   flags: "overlay" | "additive" | "blend" | "unlit" | "fresnel:<exp>" | "water" | "glass" | "mod2x" | "anim:<Zellen>:<fps>"
 //   water           CSDAWater (shared/assets3d.ts) für Wasser/Glas, normalTexture darin als glTF-Texturverweis
+//   fx = CSDAFx (shared/assets3d.ts): Himmels-Effekte der 3D-Skybox, mask1..3Texture (linear, R), color2Texture (sRGB, F_TWOTEXTURE)
 // Texturen hängen als echte glTF-Texturen an, damit prune/dedup/textureCompress sie mitverarbeiten.
 import {
   Extension, ExtensionProperty, PropertyType, TextureChannel, TextureInfo,
   type IProperty, type Nullable, type ReaderContext, type Texture, type WriterContext,
 } from '@gltf-transform/core'
-import type { CSDABlend, CSDAWater } from '../../shared/assets3d.ts'
+import type { CSDABlend, CSDAFx, CSDAWater } from '../../shared/assets3d.ts'
 
 export const CSDA = 'CSDA_materials_cs2'
 const { R, G, B, A } = TextureChannel
@@ -20,12 +21,14 @@ const SLOTS = {
   layer2BaseColorTexture: { channels: R | G | B, isColor: true }, layer3BaseColorTexture: { channels: R | G | B, isColor: true },
   blendModulationTexture: { channels: R | G | B | A }, tintMaskTexture: { channels: R }, waterNormalTexture: { channels: R | G | B },
   height1Texture: { channels: R | G }, height2Texture: { channels: R | G }, height3Texture: { channels: R | G },
+  mask1Texture: { channels: R }, mask2Texture: { channels: R }, mask3Texture: { channels: R }, color2Texture: { channels: R | G | B | A, isColor: true },
 } as const
 type TexKey = keyof typeof SLOTS
 type Water = Omit<CSDAWater, 'normalTexture'>
 type Blend = Omit<CSDABlend, never> // abgebildeter Typ: gltf-transform nimmt nur Literal-artige Werte
+type Fx = Omit<CSDAFx, never>
 type ICS2Material = IProperty & { [K in TexKey]: Texture } & { [K in TexKey as `${K}Info`]: TextureInfo } & {
-  blendSoftness: number; flags: string[]; water: Water | null; blend: Blend | null
+  blendSoftness: number; flags: string[]; water: Water | null; blend: Blend | null; fx: Fx | null
 }
 
 export class CS2Material extends ExtensionProperty<ICS2Material> {
@@ -40,8 +43,10 @@ export class CS2Material extends ExtensionProperty<ICS2Material> {
   }
   protected getDefaults(): Nullable<ICS2Material> {
     const tex = Object.fromEntries(Object.keys(SLOTS).flatMap(k => [[k, null], [k + 'Info', new TextureInfo(this.graph, k + 'Info')]]))
-    return Object.assign(super.getDefaults() as IProperty, tex, { blendSoftness: 0.1, flags: [], water: null, blend: null }) as unknown as Nullable<ICS2Material>
+    return Object.assign(super.getDefaults() as IProperty, tex, { blendSoftness: 0.1, flags: [], water: null, blend: null, fx: null }) as unknown as Nullable<ICS2Material>
   }
+  getFx() { return this.get('fx') }
+  setFx(v: CSDAFx | null) { return this.set('fx', v as Fx | null) }
   getLayer2() { return this.getRef('layer2BaseColorTexture') }
   setLayer2(t: Texture | null) { return this.setTex('layer2BaseColorTexture', t) }
   getBlendMod() { return this.getRef('blendModulationTexture') }
@@ -67,6 +72,7 @@ export class CS2Material extends ExtensionProperty<ICS2Material> {
 const INFO = {
   layer2Texture: 'layer2BaseColorTexture', layer3Texture: 'layer3BaseColorTexture', blendModTexture: 'blendModulationTexture', tintMaskTexture: 'tintMaskTexture',
   height1Texture: 'height1Texture', height2Texture: 'height2Texture', height3Texture: 'height3Texture',
+  mask1Texture: 'mask1Texture', mask2Texture: 'mask2Texture', mask3Texture: 'mask3Texture', color2Texture: 'color2Texture',
 } as const
 
 export class CSDAMaterialsCS2 extends Extension {
@@ -87,6 +93,7 @@ export class CSDAMaterialsCS2 extends Extension {
       if (d.blendSoftness !== undefined) p.setBlendSoftness(d.blendSoftness)
       if (d.flags) p.setFlags(d.flags)
       if (d.blend) p.setBlend(d.blend)
+      if (d.fx) p.setFx(d.fx)
       if (d.water) {
         const { normalTexture, ...w } = d.water
         p.setWater(w)
@@ -115,6 +122,7 @@ export class CSDAMaterialsCS2 extends Extension {
       }
       if (p.getBlendMod()) d.blendSoftness = p.getBlendSoftness()
       if (p.getBlend()) d.blend = p.getBlend()
+      if (p.getFx()) d.fx = p.getFx()
       const w = p.getWater(), wn = p.getWaterNormal()
       if (w) d.water = { ...w, ...wn && { normalTexture: context.createTextureInfoDef(wn, p.getInfo('waterNormalTexture')!) } }
       md.extensions = md.extensions || {}

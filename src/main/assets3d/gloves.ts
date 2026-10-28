@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import sharp from 'sharp'
 import type { GloveSkin, GloveSkin2, RollVar } from '../../shared/assets3d.ts'
-import { kv1, kvList, vrf, type KV } from './cs2.ts'
+import { kv1, kvList, vrfAsync, type KV } from './cs2.ts'
 import type { Ctx } from './map.ts'
 
 type Layer = Record<string, string | KV>
@@ -102,7 +102,7 @@ const OBJECT = /^g_t(Surface|Normal|LayerMask|Pattern|PatternProperties|ObjectPr
  * Export-Schritt eines Handschuh-Kits für buildSkins (doc = KV3 der Kit-vcompmat): erst die vmat (KV1), dann im finish ein eigener VRF-Aufruf
  * für die kompilierten Texturen (roh, siehe oben) → conv → write(Kit-JSON). null = keine vmat (fehlende/fremde vcompmat → Standard).
  */
-export function gloveJob(c: Ctx, doc: any, work: string, conv: GloveConv, write: (kit: GloveKit) => void): GloveJob | null {
+export function gloveJob(c: Ctx, doc: any, conv: GloveConv, write: (kit: GloveKit) => void): GloveJob | null {
   const vmat = gloveVmat(doc)
   if (!vmat) return null
   const compositor = containers(doc).some(x => x.m_strAlias === 'paint_compositor')
@@ -112,10 +112,11 @@ export function gloveJob(c: Ctx, doc: any, work: string, conv: GloveConv, write:
     const m: Layer = Object.fromEntries(kvList(kv1(readFileSync(src, 'utf8')), 'Layer0'))
     if (m.shader !== (compositor ? 'csgo_customglove_preview.vfx' : 'csgo_customglove.vfx')) { write({ unsupported: true }); return }
     const compiled = Object.fromEntries(Array.isArray(m['Compiled Textures']) ? m['Compiled Textures'] : []) as Record<string, string>
-    const dir = join(work, 'glove_tex'), rm = () => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }) // Windows: Virenscanner hält Dateien kurz offen
+    // eigener Ordner je Stapel (out): Stapel laufen parallel (buildSkins)
+    const dir = join(out, '_glove_tex'), rm = () => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }) // Windows: Virenscanner hält Dateien kurz offen
     rm(); mkdirSync(dir, { recursive: true })
     try {
-      vrf(c.exe, ['-i', c.cs2.pak, '-d', '--texture_decode_flags', 'none', '-f', [...new Set(Object.values(compiled))].map(v => v + '_c').join(','), '-o', dir], c.log)
+      await vrfAsync(c.exe, ['-i', c.cs2.pak, '-d', '--texture_decode_flags', 'none', '-f', [...new Set(Object.values(compiled))].map(v => v + '_c').join(','), '-o', dir], c.log)
       const tex: Record<string, string> = {}
       for (const [k, v] of Object.entries(compiled)) { const t = await conv(dir, v.replace(/\.vtex$/, '.png'), OBJECT.test(k) ? 2048 : 1024); if (t) tex[k] = t }
       if (!compositor) { write(gloveKit(m, doc, tex)); return }

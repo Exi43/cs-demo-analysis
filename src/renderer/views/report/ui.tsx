@@ -34,16 +34,17 @@ export function Rich({ text }: { text: string }) {
     p.k === 'icon' ? <TokenIcon key={i} t={p.s} /> : p.k === 'b' ? <b key={i}><Rich text={p.s} /></b> : p.k === 'code' ? <code key={i}>{p.s}</code> : <Fragment key={i}>{p.s}</Fragment>)}</>
 }
 
-export const TagBadge = ({ tag }: { tag: Tag }) => <span className={`rp-tag ${tag.kind.toLowerCase()}`} title={`seen in ${tag.n} of ${tag.N} rounds`}>{tag.kind} <i>{tag.n}/{tag.N}</i></span>
+const TAG_HINT: Record<Tag['kind'], string> = { HABIT: 'Habit: seen 3 or more times', PATTERN: 'Pattern: seen twice', ONCE: 'Seen once' }
+export const TagBadge = ({ tag }: { tag: Tag }) => <span className={`rp-tag ${tag.kind.toLowerCase()}`} title={`${TAG_HINT[tag.kind]}, in ${tag.n} of ${tag.N} rounds`}>{tag.kind} <i>{tag.n}/{tag.N}</i></span>
 
-/** Runden-Chips: Klick springt ins Replay (grün/rot = Runde gewonnen/verloren vom analysierten Team) */
+/** Runden-Chips: Klick springt ins Replay (grün/rot = Runde von uns gewonnen/verloren) */
 export function Chips({ refs }: { refs: Ref[] }) {
   const c = useContext(ReportCtx)
   if (!refs.length) return null
   return <span className="rp-chips">{refs.map(r => {
     const w = c.won(r)
     return (
-      <button key={`${r.matchId}:${r.round}`} className={`rchip ${w === undefined ? 'n' : w ? 'w' : 'l'}`} title={`${c.label(r)}${w === undefined ? '' : w ? ' · won' : ' · lost'} · watch in replay`}
+      <button key={`${r.matchId}:${r.round}`} className={`rchip ${w === undefined ? 'n' : w ? 'w' : 'l'}`} title={`${c.label(r)}${w === undefined ? '' : w ? ' · we won' : ' · we lost'} · watch in replay`}
         onClick={e => { e.preventDefault(); c.onRef(r) }}>{c.label(r)}</button>
     )
   })}</span>

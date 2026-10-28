@@ -10,7 +10,7 @@ import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js'
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js'
 import type { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js'
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
-import type { CSDABlend, CSDAWater, MapAssetManifest, MapSettings } from '../../../shared/assets3d'
+import type { CSDABlend, CSDAFx, CSDAWater, MapAssetManifest, MapSettings } from '../../../shared/assets3d'
 import { worldToGltf } from '../contracts'
 import { ENV_ALBEDO } from './lighting'
 import { TexPack, packPlugins, uploadNow } from './texstream'
@@ -265,6 +265,59 @@ const WATER_OUT = `
 		gl_FragColor = vec4( ( csdaF * csdaSkyC + ( csdaA - csdaF ) * totalDiffuse + reflectedLight.directSpecular ) / max( csdaA, 1e-3 ), csdaA );
 	#endif`
 
+/**
+ * Himmels-Effekte der 3D-Skybox (CSDAFx, shared/assets3d.ts): Basis mit UV-Skala/-Schwenk, zweite Textur (F_TWOTEXTURE) multipliziert,
+ * Masken 1..3 (R) auf die Deckkraft, Farbe · boost, Fresnel und Abstand wie csgo_effects. shortcut: ohne F_DEPTH_FEATHER (weiche Kante an
+ * Geometrie) und ohne Nebel auf Effekten mit Nebel (CS2 blendet additive über die Deckkraft aus); erst bei Bedarf mit Tiefen-Textur
+ */
+const FX_PARS = `
+uniform float csdaTime;
+uniform vec4 csdaFxUv;
+uniform vec2 csdaFxK;
+#ifdef CSDA_FX2
+uniform sampler2D csdaColor2;
+uniform vec2 csdaFxUv2;
+#endif
+#ifdef CSDA_FXM1
+uniform sampler2D csdaMask1;
+uniform vec4 csdaFxM1;
+#endif
+#ifdef CSDA_FXM2
+uniform sampler2D csdaMask2;
+uniform vec4 csdaFxM2;
+#endif
+#ifdef CSDA_FXM3
+uniform sampler2D csdaMask3;
+uniform vec4 csdaFxM3;
+#endif
+#ifdef CSDA_FXF
+varying vec3 vCsdaFxN, vCsdaFxP;
+uniform vec4 csdaFxFr, csdaFxFd;
+#endif`
+const FX_FRAGMENT = `
+#ifdef USE_MAP
+	vec2 csdaU = vMapUv * csdaFxUv.xy + csdaFxUv.zw * csdaTime;
+	vec4 csdaC = texture2D( map, csdaU );
+	#ifdef CSDA_FX2
+		csdaC *= texture2D( csdaColor2, vMapUv * csdaFxUv2 );
+	#endif
+	#ifdef CSDA_FXM1
+		csdaC.a *= texture2D( csdaMask1, csdaU * csdaFxM1.xy + csdaFxM1.zw * csdaTime ).r;
+	#endif
+	#ifdef CSDA_FXM2
+		csdaC.a *= texture2D( csdaMask2, csdaU * csdaFxM2.xy + csdaFxM2.zw * csdaTime ).r;
+	#endif
+	#ifdef CSDA_FXM3
+		csdaC.a *= texture2D( csdaMask3, csdaU * csdaFxM3.xy + csdaFxM3.zw * csdaTime ).r;
+	#endif
+	diffuseColor *= csdaC;
+#endif
+	diffuseColor *= vec4( vec3( csdaFxK.x ), csdaFxK.y );
+#ifdef CSDA_FXF
+	diffuseColor.a *= mix( csdaFxFr.z, csdaFxFr.w, clamp( pow( abs( dot( normalize( vCsdaFxN ), normalize( vCsdaFxP ) ) ), csdaFxFr.x ) * csdaFxFr.y, 0.0, 1.0 ) );
+	if ( csdaFxFd.x > 0.0 ) diffuseColor.a *= pow( mix( csdaFxFd.z, csdaFxFd.w, clamp( length( vCsdaFxP ) / csdaFxFd.x, 0.0, 1.0 ) ), csdaFxFd.y );
+#endif`
+
 /** Spiegel-Kontext: Himmel (equirect, linear), Drehung wie der Hintergrund, Helligkeit, Uhr der Wellen */
 /** amb = Einstrahlung des Himmels auf eine waagrechte Fläche (nur HDR-Himmel), Licht der 3D-Skybox statt Hemisphere */
 interface Sky { tex: THREE.Texture; rot: THREE.Matrix3; intensity: number; time: { value: number }; amb: { sky: THREE.Color; ground: THREE.Color } | null }
@@ -282,16 +335,21 @@ interface Feat {
   vtint?: boolean
   /** Bündel aus Lightmap- und Sonden-Meshes (Sonden-Vertices: uv1 = −1, Lightmap-Vertices: Sonde 0) */
   mix?: boolean
-  /** 3D-Skybox: Maßstab (Tiefe und vViewPosition im Skybox-Raum), skyAmb = Himmelslicht statt Hemisphere (ohne Lightmap/Sonden) */
-  sky?: number; skyAmb?: Sky['amb']
+  /** 3D-Skybox: Maßstab (eigene Tiefe), skyFog = Nebel-Abstände ÷ skyFog (eigener Skybox-Nebel), skyAmb = Himmelslicht statt Hemisphere (ohne Lightmap/Sonden) */
+  sky?: number; skyFog?: number; skyAmb?: Sky['amb']
+  /** Himmels-Effekt (Wolken, Sonnenscheibe, Dunst) mit Masken 1..3 und zweiter Textur; Uhr = time */
+  fx?: CSDAFx; masks?: (THREE.Texture | null)[]; color2?: THREE.Texture | null
 }
 
-function patchMaterial(mat: THREE.MeshStandardMaterial, f: Feat) {
+/** Map-Materialien (MeshStandardMaterial) und unbeleuchtete der 3D-Skybox (MeshBasicMaterial: nur sky und fx greifen) */
+function patchMaterial(mat: THREE.MeshStandardMaterial | THREE.MeshBasicMaterial, f: Feat) {
   const height = f.bl?.kind === 'height' && !!f.heights?.[0] && !!f.heights?.[1], l3 = height && !!f.layer3 && !!f.heights?.[2], adj = !!f.bl?.adj?.some(Boolean)
   const face = height && !!(f.bl?.face2 || (l3 && f.bl?.face3)), tintA = !!f.tint && !!f.bl?.tintA
+  const fxf = !!(f.fx?.fresnel || f.fx?.fade)
   const key = ['csda', f.blend ? 'b' : '', f.blendMod ? 'm' : '', height ? 'H' : '', l3 ? '3' : '', adj ? 'j' : '', face ? 'o' : '', tintA ? 'A' : '', f.tint ? 't' : '',
     f.mod2x ? 'M' : '', f.anim ? 'a' : '', f.sunMask ? 's' : '', f.probe ? 'p' : '', f.fresnel ? 'f' : '', f.hemiOct ? 'h' : '',
-    f.water ? { water: 'w', glass: 'g', mirror: 'r' }[f.water.mode] : '', f.waves ? 'n' : '', f.vtint ? 'v' : '', f.sky ? 'k' : '', f.mix ? 'x' : ''].join('')
+    f.water ? { water: 'w', glass: 'g', mirror: 'r' }[f.water.mode] : '', f.waves ? 'n' : '', f.vtint ? 'v' : '', f.sky ? 'k' : '', f.skyFog ? `K${f.skyFog}` : '', f.mix ? 'x' : '',
+    f.fx ? `F${f.masks?.map(m => +!!m).join('') ?? ''}${f.color2 ? '2' : ''}${fxf ? 'r' : ''}` : ''].join('')
   mat.customProgramCacheKey = () => key
   mat.onBeforeCompile = sh => {
     // Kopie: sh.defines ist material.defines; Mutieren ändert den Programm-Schlüssel nach dem Kompilieren → jedes Map-Material
@@ -380,14 +438,29 @@ function patchMaterial(mat: THREE.MeshStandardMaterial, f: Feat) {
     } else fs = fs.replace('#include <lights_fragment_begin>', LIGHTS_BEGIN)
     if (!f.water && !f.mod2x) fs = fs.replace('#include <lights_fragment_end>', METAL_ENV)
     if (f.hemiOct) fs = fs.replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps.replace(NORMAL_MAP_LINE, HEMI_OCT)) // nach fresnel (hängt sich an das include)
+    if (f.fx) {
+      const x = f.fx, v4 = (a?: number[], d = [0, 1, 0, 1]) => new THREE.Vector4(...(a ?? d))
+      Object.assign(sh.uniforms, { csdaTime: f.time ?? { value: 0 }, csdaFxUv: { value: v4(x.uv) }, csdaFxK: { value: new THREE.Vector2(x.boost, x.opacity) } })
+      if (f.color2) { D.CSDA_FX2 = ''; Object.assign(sh.uniforms, { csdaColor2: { value: f.color2 }, csdaFxUv2: { value: new THREE.Vector2(...(x.uv2 ?? [1, 1])) } }) }
+      f.masks?.forEach((m, i) => { if (m && x.masks?.[i]) { D[`CSDA_FXM${i + 1}`] = ''; sh.uniforms[`csdaMask${i + 1}`] = { value: m }; sh.uniforms[`csdaFxM${i + 1}`] = { value: v4(x.masks[i]) } } })
+      if (fxf) {
+        // Normale und Position im Kamera-Raum (echte Abstände wie der Nebel) für Fresnel/Abstand
+        D.CSDA_FXF = ''; Object.assign(sh.uniforms, { csdaFxFr: { value: v4(x.fresnel, [0.001, 1, 0, 1]) }, csdaFxFd: { value: v4(x.fade) } })
+        vs = vs.replace('#include <common>', '#include <common>\nvarying vec3 vCsdaFxN, vCsdaFxP;')
+          .replace('#include <fog_vertex>', '#include <fog_vertex>\n\tvCsdaFxN = normalize( normalMatrix * normal );\n\tvCsdaFxP = mvPosition.xyz;')
+      }
+      fs = fs.replace('#include <common>', '#include <common>\n' + FX_PARS).replace('#include <map_fragment>', FX_FRAGMENT)
+    }
     if (f.sky) {
       if (f.skyAmb) {
         D.CSDA_SKYAMB = ''; D.CSDA_NOHEMI = ''; sh.uniforms.csdaSkyAmb = { value: f.skyAmb.sky }; sh.uniforms.csdaGroundAmb = { value: f.skyAmb.ground }
         fs = fs.replace('#include <common>', '#include <common>\nuniform vec3 csdaSkyAmb;\nuniform vec3 csdaGroundAmb;')
       }
-      // echte Größe liegt hinter far: eigene lineare Tiefe (Tiefenpuffer wird nach der Skybox geleert); danach mvPosition im Skybox-Raum
-      // (÷ Maßstab): Blickrichtung bleibt, Nebel (fog_vertex) und vViewPosition rechnen mit Skybox-Abständen wie die CS2-Skybox-Kamera
-      vs = vs.replace('#include <project_vertex>', `#include <project_vertex>\n\tgl_Position.z = ( 2.0 * min( - mvPosition.z * ${(1 / SKY_FAR_M).toExponential(3)}, 1.0 ) - 1.0 ) * gl_Position.w;\n\tmvPosition.xyz /= ${f.sky.toFixed(3)};`)
+      // echte Größe liegt hinter far: eigene lineare Tiefe (Tiefenpuffer wird nach der Skybox geleert)
+      vs = vs.replace('#include <project_vertex>', `#include <project_vertex>\n\tgl_Position.z = ( 2.0 * min( - mvPosition.z * ${(1 / SKY_FAR_M).toExponential(3)}, 1.0 ) - 1.0 ) * gl_Position.w;`)
+      // Nebel wie CS2 laut Ladebildern: Skybox mit eigenen Nebel-Entities in Skybox-Abständen (Inferno-Berg, Nuke), sonst Map-Nebel in echten
+      // Abständen (Dust2-Dunst auf den Hügeln: oberes Bildviertel ΔE 4,4 → 2,1). shortcut: eigene Nebel-Werte = die der Map (bei allen 7 Maps Kopien)
+      if (f.skyFog) vs = vs.replace('#include <fog_vertex>', `mvPosition.xyz /= ${f.skyFog.toFixed(3)};\n#include <fog_vertex>\n\tmvPosition.xyz *= ${f.skyFog.toFixed(3)};`)
     }
     sh.vertexShader = vs; sh.fragmentShader = fs
   }
@@ -444,7 +517,7 @@ function loadGltf(url: string, ktx2: KTX2Loader, renderer: THREE.WebGLRenderer, 
 
 /** lädt GLB (native Texturen per ktx2) + Lightmap + Himmel (+ 3D-Skybox) und patcht alle Materialien. onPct 0..1 (GLB-Download). */
 export async function loadMap(m: MapAssetManifest, ktx2: KTX2Loader, renderer: THREE.WebGLRenderer, anisotropy: number, onPct: (f: number) => void): Promise<LoadedMap> {
-  const [gltf, lm, sky, sbGltf] = await Promise.all([
+  const [gltf, lm, sky, sbGltf, sbLm] = await Promise.all([
     loadGltf(m.glb, ktx2, renderer, anisotropy, onPct),
     bitmapTexture(m.lightmap, true).then(t => {
       t.channel = 1; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4
@@ -456,6 +529,7 @@ export async function loadMap(m: MapAssetManifest, ktx2: KTX2Loader, renderer: T
       : m.sky ? new THREE.TextureLoader().loadAsync(m.sky).then(t => { t.colorSpace = THREE.SRGBColorSpace; return t }) : Promise.resolve(null),
     // optional: ohne 3D-Skybox nur Himmel
     m.skybox ? loadGltf(m.skybox.glb, ktx2, renderer, anisotropy).catch(e => { console.warn('3d skybox', e); return null }) : null,
+    m.skybox?.lightmap ? bitmapTexture(m.skybox.lightmap, true).then(t => { t.channel = 1; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; return t }, () => null) : null,
   ])
   if (sky) sky.mapping = THREE.EquirectangularReflectionMapping
 
@@ -471,7 +545,8 @@ export async function loadMap(m: MapAssetManifest, ktx2: KTX2Loader, renderer: T
     // Map-Position = (Skybox-Position − origin) · scale; gezeichnet vor der Map, danach Tiefe leeren (wie CS2: Skybox-Pass zuerst)
     const sb = m.skybox!, root = sbGltf.scene, o = worldToGltf(sb.origin[0], sb.origin[1], sb.origin[2], new THREE.Vector3())
     root.scale.setScalar(sb.scale); root.position.copy(o).multiplyScalar(-sb.scale); root.updateMatrixWorld(true)
-    const s = await prepare(sbGltf, { lm: null, lmIntensity, anisotropy, extra, env, sky: sb.scale })
+    if (sbLm) extra.add(sbLm)
+    const s = await prepare(sbGltf, { lm: sbLm, lmIntensity, anisotropy, extra, env, sky: sb.scale, skyFog: sb.ownFog && sb.scale !== 1 ? sb.scale : undefined })
     const sbox = new THREE.Group(); sbox.name = 'csda-skybox'
     const see = new Set(s.meshes.map(x => x.material as THREE.Material).filter(x => x.transparent))
     for (const mat of see) { mat.transparent = false; mat.depthWrite = false; if (mat.blending === THREE.NormalBlending) mat.blending = THREE.CustomBlending }
@@ -491,7 +566,7 @@ export async function loadMap(m: MapAssetManifest, ktx2: KTX2Loader, renderer: T
   return { root: gltf.scene, meshes: map.meshes, solid: map.solid, lightmap: lm, sky, extra }
 }
 
-interface Ctx { lm: THREE.Texture | null; lmIntensity: number; anisotropy: number; extra: Set<THREE.Texture>; env: Sky; sky?: number; flat?: THREE.Texture }
+interface Ctx { lm: THREE.Texture | null; lmIntensity: number; anisotropy: number; extra: Set<THREE.Texture>; env: Sky; sky?: number; skyFog?: number; flat?: THREE.Texture }
 
 /** 1×1 Ersatz für eine weggefallene Höhen-Textur (R Höhe 0,5, G Tint-Maske 1), einmal je Map (in extra → dispose) */
 function flatHeight(c: Ctx) {
@@ -514,6 +589,8 @@ async function prepare(gltf: GLTF, c: Ctx): Promise<{ meshes: THREE.Mesh[]; soli
   const meshes: THREE.Mesh[] = [], solid: THREE.Mesh[] = []
   gltf.scene.traverse(o => { if ((o as THREE.Light).isLight) drop.push(o); else if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh) })
   for (const o of drop) o.removeFromParent()
+  // Skybox-Lightmap nicht ladbar: Lightmap-UVs weg, sonst Bündel mit Lightmap-Code ohne Lightmap (ungültige Shader) → Himmelslicht
+  if (!c.lm) for (const m of meshes) m.geometry.deleteAttribute('uv1')
   gltf.scene.updateMatrixWorld(true)
 
   const done = new Map<string, THREE.Material>(), feats = new Map<THREE.Material, Feat>(), jobs: Promise<unknown>[] = []
@@ -531,7 +608,7 @@ async function prepare(gltf: GLTF, c: Ctx): Promise<{ meshes: THREE.Mesh[]; soli
     const flags: string[] = ext.flags ?? []
     const water = flags.includes('water'), glass = flags.includes('glass')
     const anim = flags.find(s => s.startsWith('anim:'))?.split(':').slice(1).map(Number) as [number, number] | undefined
-    if (water || anim) mesh.onBeforeRender = tick // jedes Wasser-/Animations-Mesh: ein ausgesondertes hielte sonst die Uhr an
+    if (water || anim || ext.fx) mesh.onBeforeRender = tick // jedes Wasser-/Animations-/Effekt-Mesh: ein ausgesondertes hielte sonst die Uhr an
     const transparent = src.transparent || water || flags.includes('overlay') || flags.includes('additive') || flags.includes('blend') || flags.includes('mod2x')
     // Material kann von mehreren Meshes geteilt sein; Varianten (Lightmap / Sonde / ohne) getrennt
     const variant = g.attributes.uv1 ? 'lm' : g.attributes.csdaProbe ? 'pr' : 'none'
@@ -562,14 +639,15 @@ async function prepare(gltf: GLTF, c: Ctx): Promise<{ meshes: THREE.Mesh[]; soli
       ;[ext.height1Texture, ext.height2Texture, ext.height3Texture].forEach((d, i) => { if (d) wait.push(texOf(d, false).then(t => { f.heights![i] = t })) })
     }
     if (ext.tintMaskTexture) wait.push(texOf(ext.tintMaskTexture, false).then(t => { f.tint = t }))
-    if (variant === 'lm' && c.lm) { mat.lightMap = c.lm; mat.lightMapIntensity = c.lmIntensity; f.sunMask = true }
+    // unbeleuchtete Materialien (MeshBasicMaterial: csgo_unlitgeneric, Effekte) ohne Lightmap/Sonde wie in CS2
+    if (variant === 'lm' && c.lm && mat.isMeshStandardMaterial) { mat.lightMap = c.lm; mat.lightMapIntensity = c.lmIntensity; f.sunMask = true }
     else {
       mat.lightMap = null // Klon eines Lightmap-Materials: ohne uv1 läse es sonst Texel (0,0) als Zusatzlicht (Sonden-Props zu hell)
-      if (variant === 'pr') f.probe = c.lmIntensity
+      if (variant === 'pr' && mat.isMeshStandardMaterial) f.probe = c.lmIntensity
     }
     const fr = flags.find(s => s.startsWith('fresnel:')); if (fr) f.fresnel = parseFloat(fr.slice(8))
     f.hemiOct = !!(mat.normalMap as THREE.CompressedTexture | null)?.isCompressedTexture
-    if (c.sky) { f.sky = c.sky; f.skyAmb = c.env.amb }
+    if (c.sky) { f.sky = c.sky; f.skyFog = c.skyFog; if (!f.sunMask && !f.probe) f.skyAmb = c.env.amb } // Himmelslicht nur ohne gebackenes Licht der Skybox
     const mirror = !transparent && mat.isMeshStandardMaterial && !mat.roughnessMap && mat.roughness <= MIRROR_ROUGHNESS && mat.metalness === 0
     if (water || glass || mirror) {
       // fehlt ext.water (Vertrag shared/assets3d.ts): Exponent 5, Reflectance 0,025; Spiegel: Dielektrikum F0 0,04
@@ -594,8 +672,15 @@ async function prepare(gltf: GLTF, c: Ctx): Promise<{ meshes: THREE.Mesh[]; soli
       if (anim) { f.anim = anim; f.time = c.env.time }
     }
     if (flags.includes('blend')) mat.depthWrite = false
+    if (flags.includes('nofog')) mat.fog = false // g_bFogEnabled 0 (Wolken, Sonnenscheiben)
+    if (ext.fx) {
+      f.fx = ext.fx; f.time = c.env.time; f.masks = [null, null, null]
+      ;[ext.mask1Texture, ext.mask2Texture, ext.mask3Texture].forEach((d, i) => { if (d) wait.push(texOf(d, false).then(t => { f.masks![i] = t })) })
+      if (ext.color2Texture) wait.push(texOf(ext.color2Texture, true).then(t => { f.color2 = t }))
+    }
     if (mat.alphaTest > 0) mat.alphaToCoverage = true
-    jobs.push(Promise.all(wait).then(() => { if (mat.isMeshStandardMaterial) { patchMaterial(mat, f); feats.set(mat, f) } mat.needsUpdate = true }))
+    // unbeleuchtete Skybox-Materialien (MeshBasicMaterial) brauchen den sky-Patch: sonst hinter far abgeschnitten (Dust2-Wolken nur bis 1 km)
+    jobs.push(Promise.all(wait).then(() => { if (mat.isMeshStandardMaterial || f.sky || f.fx) { patchMaterial(mat, f); feats.set(mat, f) } mat.needsUpdate = true }))
     mesh.material = mat
     done.set(k, mat)
   }

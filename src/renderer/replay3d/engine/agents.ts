@@ -1,18 +1,21 @@
 // CS2-Agenten (Port von agents/render/agentRuntime.mjs): eine Clip-GLB für alle Modelle (Bindung über Bone-Namen),
 // 8-Richtungs-Blending relativ zum Blick (Laufen, Gehen mit Shift, Ducken), Sprung mit additivem Absprung/Landung,
 // Pflanzen/Entschärfen, Oberkörper-Ebene mit den Welt-Clips der Waffe (Ziehen, Nachladen, Schießen, Granate, Messer),
-// prozedurales Zielen und Umfallen, Waffe an Bone 'wpn' mit Root-Versatz (Critic P0-1), Licht aus dem Sonden-Raster (Critic P0-2).
+// prozedurales Zielen, Blend-Reaktion (Arm vors Gesicht, worldmodel.vnmgraph 'flashed'), Ragdoll beim Tod (ragdoll.ts),
+// Waffe an Bone 'wpn' mit Root-Versatz (Critic P0-1), Licht aus dem Sonden-Raster (Critic P0-2).
 // Draw-Calls: Schatten (und X-Ray, xray.ts) zeichnet eine Hülle je Agent (alle Primitive eines Skeletts in einer Geometrie) statt 4–6
 // Primitive, im Bild sind Primitive mit gleichem Material zusammengelegt; jedes Agenten-Mesh testet eine feste Kugel um das Becken (CULL),
 // die Schattenkarte zusätzlich, ob der Schatten ins Bild fällt.
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js'
-import { FLAG, type TrackSample } from '../../../shared/cs3d'
+import { EV, FLAG, flashAt, upperBound, type CS3D, type TrackSample } from '../../../shared/cs3d'
 import { floorLayer, type FloorGrid, type WeaponAnim, type WeaponAsset, type WorldRole } from '../../../shared/assets3d'
 import type { Side } from '../../../shared/model'
 import { worldToGltf, type Action, type ActionKind, type Jump, type LabelInfo } from '../contracts'
 import { LIGHTS_BEGIN, SKY_REFL } from './map'
+import { applyStickers, hangCharm } from './econ'
+import { BASES, NP, PARTICLES, RP, basis, type RagdollInput, type RagdollSim } from './ragdoll'
 import { applyFinish, type SkinTex } from './skins'
 
 const D2R = Math.PI / 180
@@ -30,7 +33,7 @@ const SKEL_UPDATE = THREE.Skeleton.prototype.update
 const sameSkin = (a: THREE.Skeleton, b: THREE.Skeleton) =>
   a.bones.length === b.bones.length && a.bones.every((x, i) => x === b.bones[i] && a.boneInverses[i].equals(b.boneInverses[i]))
 
-/** Kugel um das Becken im Raum der Wurzel (Füße, m): Körper, Umfallen und Waffe in der Hand; agent-page 'sphere' (user-demo, alle Runden
+/** Kugel um das Becken im Raum der Wurzel (Füße, m; Ragdoll: Wurzel unter dem Becken): Körper und Waffe in der Hand; agent-page 'sphere' (user-demo, alle Runden
  *  und Spieler, 5652 Posen): Körper bis 1,36 m, Ecken der Waffen-Box bis 1,62 m (AWP) */
 export const CULL = new THREE.Sphere(new THREE.Vector3(0, 0.9, 0), 1.65)
 /** Höhe (m), aus der ein Agenten-Schatten noch ins Bild fallen kann (Körper + Absatz darunter): Länge = SHADOW_H / sin(Sonnenhöhe) */
@@ -130,6 +133,55 @@ const kOf = (tau: number, dur: number, hold: boolean) => Math.min(1, tau / FADE_
 /** Ebenen je Bild höchstens: 6 Fortbewegung + 4 Oberkörper (Aktion und Vorgänger, je stehend/geduckt) + 1 Sprung-Additiv */
 const MAX_LAYERS = 16
 
+/** Zuwachs der Schrittphase in dt s bei Tempo speed (u/s) wie die Lauf-Clips; die Engine summiert ihn je Runde (deterministisch) */
+export function phaseInc(speed: number, crouch: boolean, walk: boolean, dt: number) {
+  const ref = crouch ? CLIP_SPEED.crouch : walk ? CLIP_SPEED.walk : CLIP_SPEED.run
+  return (dt * THREE.MathUtils.clamp(speed / ref, 0.5, 1.6)) / (crouch ? 0.8 : walk ? 1.0 : 0.7333)
+}
+
+/** Maske 'Flashed' (animation/skeletons/characters/worldmodel.vnmskel): Gewicht je Bone, Kinder erben; Becken, Beine, Waffe 0 */
+const FLASH_MASK: Record<string, number> = { spine_0: 0.1, spine_1: 0.25, spine_2: 0.7, spine_3: 0.9, neck_0: 1, head_0: 1, clavicle_L: 1, arm_upper_L: 1, clavicle_R: 0.2 }
+/**
+ * Gewicht der Blend-Ebene wie worldmodel.vnmgraph 'flashed': Zustand an, sobald flashed_amount > 0,1 (Übergang 0,2 s linear), dann
+ * flashed_amount 0,1..1 → 0..0,95. flashed_amount steht nicht in der Demo: Blendung flashAt (wie Bildschirm-Weiß und HUD).
+ */
+export function flashWeight(d: CS3D, p: number, tick: number) {
+  const a = flashAt(d, p, tick)
+  if (a <= 0.1) return 0
+  const E = d.evt
+  let i = upperBound(E.tick, tick) - 1
+  while (i >= 0 && !(E.type[i] === EV.player_blind && E.player[i] === p)) i-- // a > 0 → es gibt eins (dasselbe wie in flashAt)
+  const on = i < 0 || flashAt(d, p, E.tick[i] - 1) > 0.1 ? 1 : Math.min(1, (tick - E.tick[i]) / d.header.tickrate / 0.2)
+  return on * 0.95 * Math.min(1, (a - 0.1) / 0.9)
+}
+
+/** die 15 PHYS-Körper: Bone, Elternkörper (−1 = Wurzel), Glied-Richtung Partikel a→b (Becken/Brust: Basis BASES[i]); Eltern vor Kindern */
+const BODIES: readonly (readonly [string, number, number, number])[] = [
+  ['pelvis', -1, -1, -1], ['spine_2', 0, -1, -1], ['head_0', 1, RP.headJ, RP.head],
+  ['leg_upper_L', 0, RP.hipL, RP.kneeL], ['leg_lower_L', 3, RP.kneeL, RP.ankleL], ['ankle_L', 4, RP.ankleL, RP.ballL],
+  ['leg_upper_R', 0, RP.hipR, RP.kneeR], ['leg_lower_R', 6, RP.kneeR, RP.ankleR], ['ankle_R', 7, RP.ankleR, RP.ballR],
+  ['arm_upper_L', 1, RP.shL, RP.elbL], ['arm_lower_L', 9, RP.elbL, RP.wrL], ['hand_L', 10, RP.wrL, RP.handL],
+  ['arm_upper_R', 1, RP.shR, RP.elbR], ['arm_lower_R', 12, RP.elbR, RP.wrR], ['hand_R', 13, RP.wrR, RP.handR],
+]
+/** Knie-/Ellbogen-Achse = Bone-Z dieser Bones (ragdoll.ts RagdollInput.hinge) */
+const HINGE_BONES = ['leg_upper_L', 'leg_upper_R', 'arm_upper_L', 'arm_upper_R']
+/**
+ * Ragdoll-Start aus der Todespose (Agent.ragdollStart) + Simulation: q0 = Welt-Drehung je Körper bei Tod (q0i invers), off = Elternkörper →
+ * Eltern-Bone (Bones dazwischen frieren in der Todespose; Becken: Welt-Drehung seines Eltern-Bones), k = Körper relativ zur Partikel-Basis
+ * (Becken, Brust), u0 = Glied-Richtung bei Tod
+ */
+export interface RagdollStart extends Omit<RagdollInput, 'v'> {
+  q0: THREE.Quaternion[]; q0i: THREE.Quaternion[]; off: THREE.Quaternion[]; k: THREE.Quaternion[]; u0: THREE.Vector3[]
+}
+export interface Ragdoll extends RagdollStart { sim: RagdollSim }
+const _B = new Float64Array(9)
+/** Drehung der Partikel-Basis BASES[i] als Quaternion */
+function basisQ(X: ArrayLike<number>, i: number, out: THREE.Quaternion) {
+  const [a, b, c, d] = BASES[i]
+  basis(X, a, b, c, d, _B)
+  return out.setFromRotationMatrix(_m2.set(_B[0], _B[3], _B[6], 0, _B[1], _B[4], _B[7], 0, _B[2], _B[5], _B[8], 0, 0, 0, 0, 1))
+}
+
 /** Rollen-Tabelle (WeaponAsset.world.roles) + Clips des world-GLB → WorldClips; einmal je Waffe, dann an alle Agenten (setWorldClips) */
 export function worldClips(roles: Partial<Record<WorldRole, string>>, clips: readonly THREE.AnimationClip[]): WorldClips {
   const out: WorldClips = {}
@@ -195,11 +247,15 @@ class LeftGun extends THREE.Group {
  * Skin-Wechsel an Meshes (Waffe: erstes Mesh mit Textur = Körper, Aufkleber-Lücken/Zielfernrohr bleiben; Handschuh: glove_*).
  * Material je Skin einmal anlegen: Kopie des Vanilla-Materials mit Composite-Texturen, gleiche Shader-Features → kein neues Programm.
  */
+/** Waffe für Aufkleber/Anhänger: je Körper-Mesh lokale Ecke → glTF-Wurzelraum in Ruhelage; Träger des Anhängers (Wurzel bzw. Bone weapon_offset) */
+interface EconRig { toRoot: THREE.Matrix4[]; carrier: THREE.Object3D; carrierToRoot: THREE.Matrix4 }
+
 export class SkinSlot {
   private readonly vanilla: THREE.Material[]
   private readonly mats = new Map<SkinTex, THREE.Material[]>()
   private cur: SkinTex | null = null
-  constructor(private readonly meshes: THREE.Mesh[], private readonly u: AgentUniforms) { this.vanilla = meshes.map(m => m.material as THREE.Material) }
+  private charm: THREE.Object3D | null = null
+  constructor(private readonly meshes: THREE.Mesh[], private readonly u: AgentUniforms, private readonly rig?: EconRig) { this.vanilla = meshes.map(m => m.material as THREE.Material) }
   static weapon(root: THREE.Object3D, u: AgentUniforms) {
     // Körper = erstes Mesh mit Textur, dazu Meshes mit derselben Textur (Dual Berettas: linke Pistole 'left')
     const body: THREE.Mesh[] = []
@@ -207,23 +263,34 @@ export class SkinSlot {
       const m = o as THREE.Mesh, map = m.isMesh && (m.material as THREE.MeshStandardMaterial).map
       if (map && (!body.length || map === (body[0].material as THREE.MeshStandardMaterial).map)) body.push(m)
     })
-    return new SkinSlot(body, u)
+    // Ruhelage (frisch geklont): Skinned = Bone · inverse Bind · Bind-Matrix (Quantisierung steckt in den inversen Bind-Matrizen), sonst Knoten-Matrix
+    root.updateMatrixWorld(true)
+    const inv = root.matrixWorld.clone().invert(), sk = body.find(m => (m as THREE.SkinnedMesh).isSkinnedMesh) as THREE.SkinnedMesh | undefined
+    const toRoot = body.map(m => {
+      const s = m as THREE.SkinnedMesh
+      return s.isSkinnedMesh ? inv.clone().multiply(s.skeleton.bones[0].matrixWorld).multiply(s.skeleton.boneInverses[0]).multiply(s.bindMatrix) : inv.clone().multiply(m.matrixWorld)
+    })
+    const carrier = sk ? sk.skeleton.bones.find(b => b.name === 'weapon_offset') ?? sk.skeleton.bones[0] : root
+    return new SkinSlot(body, u, { toRoot, carrier, carrierToRoot: inv.clone().multiply(carrier.matrixWorld) })
   }
   set(t: SkinTex | null) {
     if (t?.dead) t = null
     if (t === this.cur) return
     for (const [k, ms] of this.mats) if (k.dead) { for (const m of ms) m.dispose(); this.mats.delete(k) }
     let ms = t && this.mats.get(t)
-    if (t && !ms) this.mats.set(t, (ms = this.vanilla.map(v => {
+    if (t && !ms) this.mats.set(t, (ms = this.vanilla.map((v, i) => {
       const m = v.clone() as THREE.MeshStandardMaterial
-      m.map = t.map; m.color.setRGB(1, 1, 1) // Handschuh-Grundmaterial ist nur eine dunkle Farbe
+      if (t.map) { m.map = t.map; m.color.setRGB(1, 1, 1) } // Handschuh-Grundmaterial ist nur eine dunkle Farbe
       if (t.orm) { m.roughnessMap = m.metalnessMap = t.orm; m.roughness = m.metalness = 1 }
       if (t.normal) m.normalMap = t.normal // Lack mit eigener Normal-Map ersetzt die der Waffe
       patchAgentMaterial(m, this.u)
       applyFinish(m, t.finish) // Perlglanz/Iridescence/Glitter/AO-Override (nur Waffen-Skins)
+      if (t.stickers && this.rig) applyStickers(m, t.stickers, this.rig.toRoot[i])
       return m
     })))
     this.meshes.forEach((m, i) => { m.material = ms ? ms[i] : this.vanilla[i] })
+    this.charm?.removeFromParent(); this.charm = null
+    if (t?.charm && this.rig) this.charm = hangCharm(this.rig.carrier, this.rig.carrierToRoot, t.charm)
     this.cur = t
   }
 }
@@ -286,9 +353,18 @@ export class Agent {
   private readonly defaultGloves: THREE.Object3D | undefined
   /** Körper-Teile, die ein Standard-Handschuh-Teil mitzeichnen (joined); mit Handschuh-Skin wieder nur own (setGlove) */
   private readonly joins: { m: THREE.SkinnedMesh; own: THREE.BufferGeometry; joined: THREE.BufferGeometry }[] = []
-  /** per Hand gesetzte Bones vor mixer.update auf den letzten Mixer-Wert zurücksetzen: PropertyMixer schreibt nur bei Änderung */
+  /** per Hand gesetzte Bones (Zielen, Blend-Ebene, Ragdoll) vor mixer.update auf den letzten Mixer-Wert zurücksetzen: PropertyMixer schreibt nur bei Änderung */
   private readonly preAim: { b: THREE.Object3D; p: THREE.Vector3; q: THREE.Quaternion }[]
   private aimed = false
+  /** Blend-Ebene: Bones ab spine_0 (Eltern vor Kind, parent −1 = Becken), Maske w, Blend-Pose stehend/geduckt, Puffer im Modellraum; null = Clips fehlen */
+  private readonly fl: {
+    bones: THREE.Object3D[]; parent: number[]; w: number[]; stand: THREE.Quaternion[]; crouch: THREE.Quaternion[]; pel: THREE.Quaternion[]
+    base: THREE.Quaternion[]; flash: THREE.Quaternion[]; out: THREE.Quaternion[]
+  } | null = null
+  /** Ragdoll-Partikel der Ruhepose (Bind, Raum der Wurzel); null = Bones fehlen */
+  private readonly restX: Float32Array | null = null
+  private readonly rx = new Float32Array(NP * 3)
+  private readonly rq = BODIES.map(() => new THREE.Quaternion())
   /** wpn-Ursprung im Raum der rechten Hand je Klasse (toHand) */
   private readonly grip: Partial<Record<WeaponAnim, THREE.Vector3>> = {}
   private lit = false
@@ -332,6 +408,7 @@ export class Agent {
     const dg = (this.defaultGloves = this.root.getObjectByName('thirdperson_default_gloves'))
     const inDg = (o: THREE.Object3D | null) => { for (; o; o = o.parent) if (o === dg) return true; return false }
     this.root.updateMatrixWorld(true)
+    if (PARTICLES.every(([n]) => this.bones[n]) && BODIES.every(([n]) => this.bones[n])) this.restX = this.particles(new Float32Array(NP * 3))
     for (const g of all) {
       if (g === dg || !inDg(g)) continue // einzelnes Primitiv = der Knoten selbst, den setGlove umschaltet
       const b = all.find(m => !inDg(m) && m.material === g.material && m.skeleton === g.skeleton && m.bindMode === g.bindMode &&
@@ -366,7 +443,24 @@ export class Agent {
     }
     this.mixer = new THREE.AnimationMixer(this.root)
     this.wpnGroup.quaternion.copy(WEAPON_Q); this.bones.wpn?.add(this.wpnGroup)
-    this.preAim = ['spine_3', 'wpnPivot'].filter(n => this.bones[n]).map(n => ({ b: this.bones[n], p: new THREE.Vector3(), q: new THREE.Quaternion() }))
+    // Blend-Ebene: Bones ab spine_0 (jiggle/eye folgen ihrem Eltern-Bone), Blend-Pose aus flashed/flashed_crouch (je ein Frame, ohne Spur = Ruhe)
+    const fs = clips.get('flashed'), fc = clips.get('flashed_crouch'), pel = this.bones.pelvis
+    if (fs && fc && pel && this.bones.spine_0) {
+      const bones: THREE.Object3D[] = [], parent: number[] = [], w: number[] = []
+      const add = (b: THREE.Object3D, pi: number, pw: number) => {
+        if (/^(jiggle|eye)/.test(b.name)) return
+        const i = bones.length, wi = FLASH_MASK[b.name] ?? pw
+        bones.push(b); parent.push(pi); w.push(wi)
+        for (const c of b.children) if ((c as THREE.Bone).isBone) add(c, i, wi)
+      }
+      add(this.bones.spine_0, -1, 0)
+      const key = (c: THREE.AnimationClip, b: THREE.Object3D) => { const t = c.tracks.find(x => x.name === `${b.name}.quaternion`); return t ? new THREE.Quaternion().fromArray(t.values) : b.quaternion.clone() }
+      const buf = () => bones.map(() => new THREE.Quaternion())
+      this.fl = { bones, parent, w, stand: bones.map(b => key(fs, b)), crouch: bones.map(b => key(fc, b)), pel: [key(fs, pel), key(fc, pel)], base: buf(), flash: buf(), out: buf() }
+    }
+    const touched = new Set(['spine_3', 'wpnPivot', ...BODIES.map(([n]) => n)].map(n => this.bones[n]).filter(b => b))
+    for (const b of this.fl?.bones ?? []) touched.add(b)
+    this.preAim = [...touched].map(b => ({ b, p: new THREE.Vector3(), q: new THREE.Quaternion() }))
     // Sprung-Additiv: mit --gltf_compose_additive als volle Pose exportiert → einmal je Clip (Map geteilt) relativ zu Frame 0 machen
     for (const [n, c] of clips) if (n.startsWith('jump_additive') && c.blendMode !== THREE.AdditiveAnimationBlendMode) THREE.AnimationUtils.makeClipAdditive(c)
   }
@@ -473,9 +567,10 @@ export class Agent {
    * Pose aus dem Spur-Zustand. dt (s Demo-Zeit) treibt nur die Schrittphase; plantT/defuseT = Sekunden seit Beginn (−1 = nein).
    * s.pitch > 0 = nach unten (CS). Optional (ActionIndex): act = at(p, tick), jumps = jumps(p), tick + rate = aktuelle Zeit;
    * act/jumps brauchen setWorldClips bzw. die jump_additive-Clips, sonst nur Fortbewegung wie bisher.
+   * flash = Gewicht der Blend-Ebene (flashWeight); phase = Schrittphase 0..1 von außen (statt dt aufzusummieren: gleich nach Spulen).
    */
-  pose(s: TrackSample, cls: WeaponAnim, dt: number, plantT: number, defuseT: number, act?: Action | null, jumps?: readonly Jump[], tick = 0, rate = 64) {
-    this.poseN++ // fall() danach im selben Bild zählt mit: Skelett rechnet erst im nächsten render-Pass
+  pose(s: TrackSample, cls: WeaponAnim, dt: number, plantT: number, defuseT: number, act?: Action | null, jumps?: readonly Jump[], tick = 0, rate = 64, flash = 0, phase?: number) {
+    this.poseN++ // ragdoll() danach im selben Bild zählt mit: Skelett rechnet erst im nächsten render-Pass
     worldToGltf(s.x, s.y, s.z, this.root.position)
     this.root.quaternion.setFromAxisAngle(UP, s.yaw * D2R) // Modell-Vorwärts +Z = Source +X
     const N = NAMES[cls] ?? NAMES.rifle
@@ -496,9 +591,7 @@ export class Agent {
       this.clip(N.crouch[i], move * duck * (1 - t), -1); this.clip(N.crouch[i2], move * duck * t, -1)
       this.clip(N.idle, (1 - move) * (1 - duck), -1); this.clip(N.idleC, (1 - move) * duck, -1)
       // gemeinsame Phase hält alle Lauf-Clips fußsynchron; Rate aus echtem Tempo
-      const ref = crouch ? CLIP_SPEED.crouch : walk ? CLIP_SPEED.walk : CLIP_SPEED.run
-      const cycle = crouch ? 0.8 : walk ? 1.0 : 0.7333
-      this.phase = (this.phase + (dt * THREE.MathUtils.clamp(speed / ref, 0.5, 1.6)) / cycle) % 1
+      this.phase = phase ?? (this.phase + phaseInc(speed, crouch, walk, dt)) % 1
     }
     // ---- Oberkörper: Welt-Clip der Aktion, bei Unterbrechung (Vorgänger endet genau beim Start) überblendet
     if (act !== undefined && act !== this.cur) { this.prev = this.cur; this.cur = act }
@@ -552,6 +645,26 @@ export class Agent {
     if (cap) this.grip[cls] = new THREE.Vector3().setFromMatrixPosition(this.bones.wpn.matrixWorld).applyMatrix4(_m.copy(this.bones.hand_R.matrixWorld).invert())
     if (fix) this.toHand(g, Math.min(1, K))
     if (aim) this.aim(pitch)
+    // Blend-Ebene nach dem Zielen (CS2: Layer über CNmAimCSNode), dann CNmSnapWeaponNode: die Waffe bleibt an der rechten Hand
+    if (flash > 0 && this.fl) {
+      this.flashLayer(flash, duck)
+      if (ok && g) { this.root.updateWorldMatrix(true, true); this.toHand(g, Math.min(1, flash / 0.95)) }
+    }
+  }
+
+  /**
+   * Blend-Ebene im Modellraum (Layer 'ModelSpace' im CS2-Graphen): je Bone die Drehung relativ zum Becken zwischen jetziger Pose und
+   * Blend-Pose (flashed/flashed_crouch nach duck) mit W · Maske mischen, dann zurück in lokale Drehungen. Becken und Beine bleiben.
+   */
+  private flashLayer(W: number, duck: number) {
+    const F = this.fl!, pb = this.bones.pelvis.quaternion, pf = _q.slerpQuaternions(F.pel[0], F.pel[1], duck)
+    for (let i = 0; i < F.bones.length; i++) {
+      const p = F.parent[i], b = F.bones[i]
+      F.base[i].multiplyQuaternions(p < 0 ? pb : F.base[p], b.quaternion)
+      F.flash[i].multiplyQuaternions(p < 0 ? pf : F.flash[p], _q2.slerpQuaternions(F.stand[i], F.crouch[i], duck))
+      F.out[i].slerpQuaternions(F.base[i], F.flash[i], W * F.w[i])
+      b.quaternion.copy(p < 0 ? pb : F.out[p]).invert().multiply(F.out[i])
+    }
   }
 
   /**
@@ -572,13 +685,50 @@ export class Agent {
     _m.decompose(wp.position, wp.quaternion, wp.scale)
   }
 
-  /** Tod ohne Clip (CS2 hat Ragdolls): letzte Pose, in 0.45 s weg vom Angreifer umkippen, dann liegen. fall = Richtung (three, waagerecht) */
-  fall(t: number, fall: THREE.Vector3) {
-    const k = Math.min(1, t / 0.45), e = k * k // beschleunigt wie Fallen
-    _v.crossVectors(UP, fall).normalize()
-    this.root.quaternion.premultiply(_q.setFromAxisAngle(_v, e * 85 * D2R))
-    this.root.position.y += e * 0.12
-    this.wpnGroup.visible = false // CS2 lässt die Waffe beim Tod fallen
+  /** Ragdoll-Partikel (ragdoll.ts PARTICLES) aus der aktuellen Pose → out (Welt m); Matrizen müssen aktuell sein */
+  private particles(out: Float32Array) {
+    PARTICLES.forEach(([n, off], i) => _v.set(off?.[0] ?? 0, off?.[1] ?? 0, off?.[2] ?? 0).applyMatrix4(this.bones[n].matrixWorld).toArray(out, i * 3))
+    return out
+  }
+
+  /** Ragdoll-Start aus der aktuellen Pose (Todespose, Matrizen aktuell); null = Modell ohne die Ragdoll-Bones */
+  ragdollStart(): RagdollStart | null {
+    if (!this.restX) return null
+    const x = this.particles(new Float32Array(NP * 3)), hinge = new Float32Array(HINGE_BONES.length * 3)
+    HINGE_BONES.forEach((n, i) => _v.setFromMatrixColumn(this.bones[n].matrixWorld, 2).normalize().toArray(hinge, i * 3))
+    const q0 = BODIES.map(([n]) => this.bones[n].getWorldQuaternion(new THREE.Quaternion()))
+    const off = BODIES.map(([n, p]) => { const w = this.bones[n].parent!.getWorldQuaternion(new THREE.Quaternion()); return p < 0 ? w : q0[p].clone().invert().multiply(w) })
+    const k = BODIES.map((_, i) => (i < BASES.length ? basisQ(x, i, new THREE.Quaternion()).invert().multiply(q0[i]) : new THREE.Quaternion()))
+    const u0 = BODIES.map(([, , a, b]) => (a < 0 ? new THREE.Vector3() : new THREE.Vector3(x[b * 3] - x[a * 3], x[b * 3 + 1] - x[a * 3 + 1], x[b * 3 + 2] - x[a * 3 + 2]).normalize()))
+    return { x, hinge, rest: this.restX, q0, q0i: q0.map(q => q.clone().invert()), off, k, u0 }
+  }
+
+  /**
+   * Ragdoll tau s nach dem Tod, nach pose() mit der Todespose: Partikel zwischen den Ticks linear, Becken/Brust aus ihrer Partikel-Basis,
+   * Glieder als kürzester Schwung gegenüber dem Elternkörper. Nur die 15 Körper-Bones bewegen sich, alle anderen behalten die Todespose (CS2).
+   */
+  ragdoll(rd: Ragdoll, tau: number) {
+    this.wpnGroup.visible = false // CS2 lässt die Waffe beim Tod fallen (drops.ts)
+    const S = rd.sim
+    S.run(Math.ceil(tau * 64) + 1) // nur so weit rechnen, wie gezeigt wird
+    const n3 = NP * 3, f = Math.max(0, Math.min(S.n - 1, tau * 64)), i = Math.floor(f), j = Math.min(S.n - 1, i + 1), t = f - i, F = S.frames, X = this.rx
+    for (let c = 0; c < n3; c++) X[c] = F[i * n3 + c] + (F[j * n3 + c] - F[i * n3 + c]) * t
+    // Wurzel so, dass die Culling-Kugel (CULL) um das Becken liegt: Bild- und Schatten-Test treffen den Körper, auch wenn er wegrutscht/-fällt
+    this.root.position.set(X[0], X[1] - CULL.center.y, X[2])
+    const Q = this.rq
+    BODIES.forEach(([n, p, a, b], k) => {
+      if (k < BASES.length) Q[k].multiplyQuaternions(basisQ(X, k, _q), rd.k[k])
+      else {
+        const pd = _q.multiplyQuaternions(Q[p], rd.q0i[p]) // Drehung des Elternkörpers seit dem Tod
+        _v.copy(rd.u0[k]).applyQuaternion(pd)
+        _v2.set(X[b * 3] - X[a * 3], X[b * 3 + 1] - X[a * 3 + 1], X[b * 3 + 2] - X[a * 3 + 2]).normalize()
+        Q[k].setFromUnitVectors(_v, _v2).multiply(pd).multiply(rd.q0[k])
+      }
+      this.bones[n].quaternion.copy(p < 0 ? rd.off[k] : _q2.multiplyQuaternions(Q[p], rd.off[k])).invert().multiply(Q[k])
+    })
+    const pel = this.bones.pelvis
+    pel.parent!.updateWorldMatrix(true, false)
+    pel.position.set(X[0], X[1], X[2]).applyMatrix4(_m.copy(pel.parent!.matrixWorld).invert())
   }
 
   /** Ambient-Cube + Sonne aus probes.bin an (x,y,z Füße), über 0.1 s geglättet; snap bei Sprung */

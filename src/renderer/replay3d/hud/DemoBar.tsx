@@ -44,6 +44,11 @@ export interface DemoBarProps {
   onSettings(open: boolean): void
   /** zurück zur 2D-Ansicht (Entwurf v2 'Exit 3D'); ohne = kein Knopf */
   onExit?(): void
+  /** Highlights-Liste offen (Knopf an, Leiste bleibt sichtbar); ohne onHighlights kein Knopf */
+  highlights?: boolean
+  onHighlights?(): void
+  /** "Play all" läuft: Fortschritt klein im Knopf, z. B. '2/42' (Knopf hervorgehoben) */
+  reel?: string
 }
 
 const EV: Record<TimelineEvent['kind'], string> = { kill: 'ui/crosshair_circle', death: 'ui/kill', plant: 'ui/bomb_c4', defuse: 'ui/defuser_white', explode: 'eq/planted_c4' }
@@ -87,7 +92,7 @@ export function DemoBar(p: DemoBarProps) {
   const root = useRef<HTMLDivElement>(null)
   const cb = useRef(p)
   cb.current = p
-  const hidden = useAutoHide(root, o.ui.demobarAutoHide || o.hideAll, p.settingsOpen || !!menu)
+  const hidden = useAutoHide(root, o.ui.demobarAutoHide || o.hideAll, p.settingsOpen || !!menu || !!p.highlights)
   useEffect(() => {
     if (!menu) return
     const close = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setMenu(null) }
@@ -181,6 +186,12 @@ export function DemoBar(p: DemoBarProps) {
           <button className="hu-btn hu-next" title={next ? `Next event: ${next.text}` : 'No more events'} disabled={!next} onClick={() => next && seekEvent(next)}>
             <HudIcon name="hud/double_arrows" className="da" /><HudIcon name="hud/deathnotice/domination" />
           </button>
+          {p.onHighlights && (
+            <button className={`hu-btn hu-hl ${p.highlights ? 'on' : ''} ${p.reel ? 'run' : ''}`} aria-expanded={!!p.highlights} onClick={p.onHighlights}
+              title={p.reel ? `Highlights: playing all (${p.reel}), click for next/stop` : 'Highlights: all kills and deaths'}>
+              <HudIcon name="ui/film" />Highlights{p.reel && <span className="n">{p.reel}</span>}
+            </button>
+          )}
           {menu === 'players' && (
             <div className="hu-menu hu-list hu-plist" data-hud="players">
               <h4>Players</h4>

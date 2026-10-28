@@ -5,6 +5,7 @@ import type { MapMeta } from '../api'
 import { TICKRATE, drawHeat, drawScene, frameAt, playerAt, type Layer } from './scene'
 import { RoundStrip } from '../views/RoundStrip'
 import { BUY_LABEL } from '../format'
+import { createFrameLoop } from '../replay3d/frameloop'
 
 const ROUND_COLORS = ['#ff6b6b', '#4dabf7', '#51cf66', '#fcc419', '#cc5de8', '#ff922b', '#22b8cf', '#94d82d', '#f06595', '#845ef7', '#20c997', '#fab005']
 type Heat = 'none' | 'pos' | 'deaths' | 'kills'
@@ -45,16 +46,18 @@ export function MultiRoundView({ match, map, img, lowerImg }: { match: MatchData
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const tRef = useRef(t); tRef.current = t
 
+  // Bildtakt wie ReplayView (Bildlimit, minimiert kein Bild)
   useEffect(() => {
     if (!playing) return
-    let last = performance.now(), raf = 0
-    const loop = (now: number) => {
-      const next = tRef.current + ((now - last) / 1000) * speed; last = now
-      if (next >= maxT) { setT(maxT); setPlaying(false); return }
-      setT(next); raf = requestAnimationFrame(loop)
-    }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
+    const loop = createFrameLoop({
+      step(_now, dt) {
+        const next = tRef.current + (dt / 1000) * speed
+        if (next >= maxT) { setT(maxT); setPlaying(false) } else setT(next)
+      },
+      wantsFrame: () => false, onHud() {}, onStats() {},
+    })
+    loop.setPlaying(true)
+    return () => loop.stop()
   }, [playing, speed, maxT])
 
   useEffect(() => {
