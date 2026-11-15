@@ -53,7 +53,7 @@ class Bits {
 // ---------------------------------------------------------------- Decoder (nur Bit-Verbrauch; Wert nur für Ganzzahl/roh 32 bit)
 
 const NOSCALE = 0, VARINT = 1, BOOL = 2, QF = 3, QANGLE3 = 4, VEC96 = 5, COORD = 6, VCOORD = 7, STRING = 8, QVAR = 9, NORMAL = 10, U64 = 11,
-  FIXED64 = 12, QPRES = 13, POLY = 14, BLOB = 15
+  FIXED64 = 12, QPRES = 13, POLY = 14, BLOB = 15, FIXED8 = 16
 interface Dec { k: number; n?: number; fl?: number }
 const D = (k: number): Dec => ({ k })
 const BASE: Record<string, Dec> = {
@@ -123,6 +123,7 @@ function read(r: Bits, d: Dec): number {
     case NORMAL: { const a = r.bool(), b = r.bool(); r.skip((a ? 12 : 0) + (b ? 12 : 0) + 1); return 0 }
     case U64: for (let i = 0; i < 10 && r.read(8) & 128; i++); return 0
     case FIXED64: r.skip(64); return 0
+    case FIXED8: return r.read(8)
     case QPRES: { const n = +r.bool() + +r.bool() + +r.bool(); r.skip(20 * n); return 0 }
     case POLY: r.read(1); r.ubv(); return 0
     case BLOB: r.skip(8 * r.varint()); return 0
@@ -162,6 +163,9 @@ function decoderOf(name: string, t: FType, enc: string, bits: number, flags: num
   if (name === 'm_OwnerOnlyPredNetVectorVariables' || name === 'm_PredVectorVariables') d = D(VEC96)
   if (name === 'm_pGameModeRules') d = D(POLY)
   if (enc === 'qangle_precise') d = D(QPRES)
+  // CS2 Build 14197 (11.11.2026): 8-Bit-Felder (auch in Arrays/Vektoren) mit Encoder „fixed8“ = ein rohes Byte statt Varint
+  // (demoparser2 0.42.2, Commit 4ba136a); Vektorlängen bleiben Varints
+  if (enc === 'fixed8') d = D(FIXED8)
   return d
 }
 
